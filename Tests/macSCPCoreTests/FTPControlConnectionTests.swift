@@ -1965,11 +1965,23 @@ struct FTPControlConnectionTests {
 
             // Hand the turn over, then read the flag from inside the
             // waiter's own span and again from outside it.
+            // Each `.value` read below is preceded by something that implies
+            // the task has got past its last suspension, and each of those
+            // is itself bounded by this test's own cancellation:
+            // `AsyncSignal.wait()` answers `.cancelled`, and `pollUntil` has
+            // no deadline and ends only by cancellation. A bare
+            // `await holder.value` here would have had its ending inside
+            // `readReply()`, which is the code under test.
             holderMayFinish.signal()
-            let holderCompletion = try await holder.value.completion?.code
+            // The waiter's drain can only be running because the holder gave
+            // the turn up, so this bounds the holder's own completion.
             _ = await waiterDrained.wait()
             let heldFromOutside = await connection.turnIsHeld
+            let holderCompletion = try await holder.value.completion?.code
             waiterMayFinish.signal()
+            try await pollUntil("the waiter's transfer to give the turn up") {
+                await connection.turnIsHeld == false
+            }
             let waiterCompletion = try await waiter.value.completion?.code
 
             await holderData.close()
