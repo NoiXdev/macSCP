@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -395,6 +396,38 @@ struct FTPStoredSessionTests {
         // And the positive beside it: the journal is not empty.
         let journal = await server.receivedCommands
         #expect(journal.contains { $0.verb == "USER" })
+    }
+
+    /// Neither registered row ever puts a certificate question to anyone.
+    ///
+    /// The behaviour is measured above through `FTPProbe`'s parameters; what
+    /// those parameters cannot show is which decider the two REGISTERED
+    /// closures hand them, because running a closure means reading the user's
+    /// own trust store (`SessionStore.defaultDirectory`), and a closure that
+    /// accepted would WRITE to it. So the choice is read off the source: the
+    /// body of each closure passes `.refusing` and mentions no `.asking`. The
+    /// positive half is that each body reaches `FTPProbe` at all, so a rename
+    /// that moved the call leaves this red instead of scanning an empty body.
+    @Test func neitherFTPRowAsksAboutACertificate() throws {
+        let diagnostics = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/Diagnostics", isDirectory: true)
+        let rows = [
+            (file: "DialProbes.swift", anchor: "static let ftpConnect"),
+            (file: "ContributionProbes.swift", anchor: "static let ftpFeatures"),
+        ]
+        for row in rows {
+            let source = try SourceCorpus.commentFree(
+                of: diagnostics.appendingPathComponent(row.file))
+            let body = try #require(
+                SourceSpan.body(after: row.anchor, in: source),
+                "\(row.file) has no `\(row.anchor)` with a body")
+            let reachesTheProbe = body.contains("FTPProbe.")
+            let refuses = body.contains("decider: .refusing")
+            let asks = body.contains(".asking")
+            #expect(reachesTheProbe, "\(row.anchor) no longer calls FTPProbe")
+            #expect(refuses, "\(row.anchor) does not pass the refusing decider")
+            #expect(asks == false, "\(row.anchor) mentions a deciding closure")
+        }
     }
 
     /// Plain FTP is skipped by BOTH rows, through the closures the descriptor
