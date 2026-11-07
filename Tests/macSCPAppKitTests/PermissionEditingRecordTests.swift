@@ -70,6 +70,65 @@ struct PermissionEditingRecordTests {
         return sessionID
     }
 
+    private func built(over fileSystem: any RemoteFileSystem, tab: SessionTab) -> BrowserSession {
+        BrowserSession(
+            id: UUID(),
+            localFS: LocalFileSystem(),
+            remoteFS: fileSystem,
+            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
+            remote: RemoteBrowserViewModel(fs: fileSystem, startPath: "/"),
+            terminal: TerminalPanelViewModel(openShell: { _, _, _ in
+                throw CancellationError()
+            }),
+            editManager: EditSessionManager(sessionID: UUID(), queue: tab.transferQueue),
+            homePath: "/")
+    }
+
+    /// Installing a session is what asks the connection: there is no way to
+    /// install one through `adopt` and not ask, which is the structural half of
+    /// Ruling T7.1 (a task wrapped in a condition inside `startSession` was
+    /// invisible to every test, Task 8 review, finding 3). The answer lands on
+    /// the session that was installed.
+    @Test func installingASessionAsksTheConnectionAndRecordsItsAnswer() async {
+        let tab = makeTab()
+        let session = built(over: ProbedFileSystem(answer: false), tab: tab)
+        tab.adopt(session, over: ProbedFileSystem(answer: false), kind: .ftp)
+        #expect(tab.session?.id == session.id)
+
+        await tab.permissionProbe?.value
+
+        #expect(tab.permissionProbe != nil)
+        #expect(tab.session?.permissionEditing == false)
+    }
+
+    /// The same install over a connection that will take a change leaves the
+    /// offer standing: the asking changes nothing it should not.
+    @Test func installingASessionOverAnAcceptingConnectionKeepsTheOffer() async {
+        let tab = makeTab()
+        let fileSystem = ProbedFileSystem(answer: true)
+        tab.adopt(built(over: fileSystem, tab: tab), over: fileSystem, kind: .ftp)
+
+        await tab.permissionProbe?.value
+
+        #expect(tab.session?.permissionEditing == true)
+    }
+
+    /// A second install replaces the first, and the first one's answer, if it
+    /// arrives late, is not written onto the second.
+    @Test func aSecondInstallIsNotAnsweredForByTheFirst() async {
+        let tab = makeTab()
+        let first = ProbedFileSystem(answer: false)
+        tab.adopt(built(over: first, tab: tab), over: first, kind: .ftp)
+        let firstProbe = tab.permissionProbe
+        let second = ProbedFileSystem(answer: true)
+        tab.adopt(built(over: second, tab: tab), over: second, kind: .ftp)
+
+        await firstProbe?.value
+        await tab.permissionProbe?.value
+
+        #expect(tab.session?.permissionEditing == true)
+    }
+
     /// A fresh session offers the editor, as every session did before the
     /// probe existed; the answer can only take the offer away.
     @Test func aFreshSessionOffersTheEditorUntilTheConnectionHasAnswered() {

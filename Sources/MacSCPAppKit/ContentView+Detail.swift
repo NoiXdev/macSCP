@@ -638,10 +638,12 @@ extension ContentView {
                                     // the session because this body is
                                     // synchronous and the question may be a
                                     // round trip (FTP's `SITE CHMOD`). The
-                                    // answer can only take the offer away.
+                                    // answer can only take the offer away, and
+                                    // the function that composes the two is
+                                    // Core's, not this body's.
                                     supportsPermissions: PermissionsAvailability.isOffered(
-                                        for: tab.connectionViewModel.kind)
-                                        && session.permissionEditing,
+                                        for: tab.connectionViewModel.kind,
+                                        answeredByConnection: session.permissionEditing),
                                     // A remote action is typed into THIS
                                     // session's shell (`session.terminal`,
                                     // named in both closures), through the

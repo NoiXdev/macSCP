@@ -2184,7 +2184,7 @@ struct ContentView: View {
         // setting, never another window's list; see
         // `TabRegistry.sessionsOfWindowHolding(_:)`.
         let settings = settingsStore
-        tab.session = BrowserSession(
+        let built = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup, stuckPaths: stuckPaths),
             remoteFS: fs,
@@ -2216,6 +2216,10 @@ struct ContentView: View {
             // the liveness probe, see `BrowserSession.homePath`'s doc comment.
             homePath: startPath
         )
+        // The one way a session is installed, because installing it is what
+        // asks the connection whether it will take a permission change
+        // (Ruling T7.1 of the FTP plan): see `SessionTab.adopt`. Not awaited.
+        tab.adopt(built, over: fs, kind: form.kind)
         // Which buckets of this connection have Object Lock, read lazily and
         // kept for the session (S3 bucket settings, Task 10). Only a
         // connection that has the bucket-settings capability gets one; it is
@@ -2235,20 +2239,6 @@ struct ContentView: View {
         tab.session?.remote.deletedFileSource = S3DeletedFileSource.make(
             for: fs, versioning: tab.session?.bucketVersioning,
             configuredBucket: { [weak tab] in tab?.connectionViewModel.values[S3Field.bucket] ?? "" })
-        // Whether THIS connection will take a permission change (Ruling T7.1
-        // of the FTP plan): asked once, as the session starts, and written
-        // onto the session by `recordPermissionEditing`, which refuses the
-        // write if the session has changed by the time the answer arrives.
-        // Not awaited -- the question can be a round trip (FTP's `SITE
-        // CHMOD`), and until the answer lands the editor is offered as it
-        // always was. `[weak tab]`: the task must not keep a closed tab alive,
-        // and a probe against a connection teardown has already closed
-        // answers `true` and writes nothing anywhere.
-        let permissionKind = form.kind
-        Task { @MainActor [weak tab] in
-            await tab?.recordPermissionEditing(
-                of: fs, kind: permissionKind, forSession: sessionID)
-        }
         // Fresh liveness for a fresh session (Task 4, fix round 1):
         // `SessionTab.liveness` lives on the tab, not the session (see that
         // property's own doc comment for why), so it needs its own reset

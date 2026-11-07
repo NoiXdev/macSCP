@@ -329,6 +329,14 @@ final class SessionTab: Identifiable {
 
     var isConnected: Bool { session != nil }
 
+    /// The task asking this tab's connection whether it will take a
+    /// permission change, started by `adopt(_:over:kind:)`. Kept so a test can
+    /// await it and a second install can cancel the first; not observable
+    /// state, and not owned by teardown (it ends when the question is
+    /// answered, and its write is refused for any session but the one it was
+    /// asked about).
+    @ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?
+
     /// This tab's connection liveness (Task 4; fix round 1 moved it here
     /// from `BrowserSession`). `nil` before the first connect attempt.
     ///
@@ -885,6 +893,36 @@ extension SessionTab {
                 case .remote: self.session?.remoteChecksums = newValue
                 }
             })
+    }
+
+    /// Installs `built` as this tab's session and asks its connection whether
+    /// it will take a permission change (Ruling T7.1 of the FTP plan).
+    ///
+    /// **The one way a connect installs a session, so that the asking cannot
+    /// be left out.** It used to be a `Task` written beside the assignment in
+    /// `ContentView.startSession`, held by substring scans; a plant that wrapped
+    /// the task in a condition that is never true left both scanned strings in
+    /// place and was GREEN against the whole suite (Task 8 review, finding 3).
+    /// A scan cannot see whether a statement is reached. Here the install and
+    /// the ask are one function a test drives, and the plant is RED.
+    ///
+    /// The probe is started, not awaited: a server that answers `SITE HELP`
+    /// slowly must not hold the browser back, and until the answer lands the
+    /// editor is offered as it always was. The handle is kept so a test can
+    /// await it, and so a second install can cancel the first's wait; the
+    /// answer is written only to the session it was asked about
+    /// (`recordPermissionEditing`), which is what makes a late first answer
+    /// harmless to the second session.
+    func adopt(
+        _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind
+    ) {
+        permissionProbe?.cancel()
+        session = built
+        let sessionID = built.id
+        permissionProbe = Task { [weak self] in
+            await self?.recordPermissionEditing(
+                of: fileSystem, kind: kind, forSession: sessionID)
+        }
     }
 
     /// Asks the connection whether it will take a permission change, and

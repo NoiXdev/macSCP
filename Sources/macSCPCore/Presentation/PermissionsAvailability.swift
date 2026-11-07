@@ -51,14 +51,21 @@ public enum PermissionsAvailability {
     /// and not the caller's.
     ///
     /// **Read by the App, once per connection (Ruling T7.1 of the FTP plan).**
-    /// The per-kind form above has exactly ONE call site, and it is inside a
-    /// SwiftUI body and so synchronous; this one is asked from
-    /// `SessionTab.recordPermissionEditing(of:kind:forSession:)` as the
-    /// session starts, and the answer is held on
-    /// `BrowserSession.permissionEditing`, which that body reads beside the
-    /// per-kind answer and which can only take the offer away. Until the
-    /// connection has answered, an FTP server with no `SITE CHMOD` is offered
-    /// the editor as it was before the probe existed.
+    /// The pane that shows the editor is built in a SwiftUI body and so is
+    /// synchronous; this one is asked from `SessionTab.adopt(_:over:kind:)`
+    /// (through `recordPermissionEditing(of:kind:forSession:)`) as the session
+    /// is installed, and the answer is held on
+    /// `BrowserSession.permissionEditing`, which the body hands to
+    /// `isOffered(for:answeredByConnection:)` below with the per-kind answer
+    /// and which can only take the offer away. Until the connection has
+    /// answered, an FTP server with no `SITE CHMOD` is offered the editor as it
+    /// was before the probe existed.
+    ///
+    /// (Withdrawn wording, verbatim: "The per-kind form above has exactly ONE
+    /// call site, and it is inside a SwiftUI body and so synchronous; this one
+    /// is asked from `SessionTab.recordPermissionEditing(of:kind:forSession:)`
+    /// as the session starts". The body now calls the composing function
+    /// instead of the per-kind one, and the asking moved into `adopt`.)
     ///
     /// (Withdrawn wording, verbatim: "**Owed: the App does not read this
     /// yet.**" The sentences after it, that an FTP server with no `SITE
@@ -88,6 +95,28 @@ public enum PermissionsAvailability {
         guard isOffered(for: kind) else { return false }
         guard let probe = connection as? any PermissionEditingProbe else { return true }
         return await probe.offersPermissionEditing()
+    }
+
+    /// What the remote pane OFFERS, composed from the two answers it holds:
+    /// the capability, known at once and per kind, and the connection's own,
+    /// known after a round trip and kept on the session
+    /// (`BrowserSession.permissionEditing`, `true` until the connection has
+    /// answered).
+    ///
+    /// The offer needs both, so an answer can only take it away: a connection
+    /// that says `false` removes the editor from a backend whose capability
+    /// allows it, and one that says `true`, or has not answered, can never
+    /// give an editor to a backend whose capability denies it.
+    ///
+    /// **A named function so the operator is a thing a test can hold.** The
+    /// composition used to be `&&` written inline in a SwiftUI body, guarded by
+    /// substring scans; a plant of `||` and a plant that made the asking task
+    /// unreachable both read GREEN against the whole suite (Task 8 review,
+    /// finding 3), because a scan sees that text is present and not what
+    /// stands between two pieces of it. Here the body has no operator to
+    /// turn over, and `PermissionsAvailabilityTests` holds the truth table.
+    public static func isOffered(for kind: ConnectionKind, answeredByConnection answer: Bool) -> Bool {
+        isOffered(for: kind) && answer
     }
 
     /// The LOCAL pane's answer, which cannot be the one above: "local" is

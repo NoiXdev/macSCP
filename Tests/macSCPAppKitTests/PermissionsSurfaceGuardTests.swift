@@ -195,40 +195,47 @@ struct PermissionsSurfaceGuardTests {
 
     // MARK: - The connection's own answer (Ruling T7.1)
 
-    /// The remote pane narrows its per-kind offer by the answer the
-    /// connection gave, and the session start is what asks for it. Two
-    /// halves of one wiring, and either alone is inert: a session that asks
-    /// and nobody reads shows the editor as before, and a pane that reads a
-    /// value nothing ever writes reads `true` for ever.
+    /// The remote pane composes its offer through Core's function, handing it
+    /// the connection's answer from the session, and the session start
+    /// installs the session through `SessionTab.adopt`, which is what asks.
     ///
-    /// Both checks require a name to be PRESENT, and the property's name is
-    /// pinned at compile time by the key path, so a rename turns this file
-    /// red instead of leaving the scans below looking for text nothing
-    /// writes.
-    @Test func theRemotePaneReadsTheConnectionsAnswerAndTheSessionStartAsksForIt() throws {
+    /// **This scan holds only that the two call sites exist.** What stands
+    /// between the pieces is held by tests, because a scan cannot see it: the
+    /// composition is `PermissionsAvailability.isOffered(for:answeredByConnection:)`
+    /// and `PermissionsAvailabilityTests` holds its truth table; the asking is
+    /// `SessionTab.adopt` and `PermissionEditingRecordTests` drives it. The
+    /// first version of this guard held both with substring scans, and a plant
+    /// that turned the `&&` into `||` and one that wrapped the asking task in a
+    /// condition that is never true both read GREEN (Task 8 review, finding 3).
+    /// The scans here no longer have an operator or a task to be wrong about.
+    ///
+    /// Each check requires a name to be PRESENT, and the property's name is
+    /// pinned at compile time by the key path, so a rename turns this file red
+    /// instead of leaving the scans looking for text nothing writes.
+    @Test func theRemotePaneAsksCoreToComposeTheOfferAndTheSessionStartInstallsThroughAdopt() throws {
         let property: WritableKeyPath<BrowserSession, Bool> = \.permissionEditing
         #expect((property as AnyKeyPath) == \BrowserSession.permissionEditing)
 
         let detail = try Self.source(Self.detailPath)
-        let reads = detail.contains("session.permissionEditing")
-        #expect(reads, """
-            \(Self.detailPath) never reads `session.permissionEditing`, so a server with \
-            no SITE CHMOD is still shown a permission editor whose Apply fails per file.
+        let composes = detail.contains("answeredByConnection: session.permissionEditing")
+        #expect(composes, """
+            \(Self.detailPath) never hands `session.permissionEditing` to \
+            `PermissionsAvailability.isOffered(for:answeredByConnection:)`, so a server \
+            with no SITE CHMOD is still shown a permission editor whose Apply fails per file.
             """)
 
         let content = try Self.source("Sources/MacSCPAppKit/ContentView.swift")
-        let asks = content.contains(".recordPermissionEditing(")
-        #expect(asks, """
-            ContentView.swift never calls `recordPermissionEditing(`, so \
-            `permissionEditing` stays at its default and the connection is never asked.
+        let installs = content.contains("tab.adopt(")
+        #expect(installs, """
+            ContentView.swift never installs a session through `tab.adopt(`, so nothing \
+            asks the connection and `permissionEditing` stays at its default.
             """)
-        // And asks about the session it is building: the write is refused for
-        // any other id, so a call that names a different one is a call whose
-        // answer is always dropped -- present, and inert.
-        let namesItsOwnSession = content.contains("forSession: sessionID)")
-        #expect(namesItsOwnSession, """
-            ContentView.swift calls `recordPermissionEditing(` without the id of the \
-            session it just built (`sessionID`), so the answer is written nowhere.
+        // The negative beside it: the session is no longer assigned directly
+        // on that path, which would install one without asking.
+        let assignsDirectly = content.contains("tab.session = built")
+        #expect(assignsDirectly == false, """
+            ContentView.swift assigns the built session to `tab.session` itself, which \
+            installs it without asking the connection.
             """)
     }
 }
