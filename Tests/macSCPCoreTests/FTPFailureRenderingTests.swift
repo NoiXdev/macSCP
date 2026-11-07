@@ -19,7 +19,7 @@ struct FTPFailureRenderingTests {
     /// One representative failure per `FTPConnectionFailure.Kind`, built by a
     /// `switch` with no `default`, so a kind added to the enum does not
     /// compile here until it has a failure to hand the mapper.
-    private static func failure(of kind: FTPConnectionFailure.Kind) -> FTPConnectionFailure {
+    static func failure(of kind: FTPConnectionFailure.Kind) -> FTPConnectionFailure {
         switch kind {
         case .greetingRefused: .greetingRefused(code: 421)
         case .timedOut: .timedOut
@@ -59,7 +59,7 @@ struct FTPFailureRenderingTests {
     ///   credential, a TLS session offered to the wrong connection, a lease
     ///   used twice, an unreadable trust store) is `unknown`, which is
     ///   what `DialSupport` says of an error a forwarding does not produce.
-    private static let expectedKinds: [FTPConnectionFailure.Kind: TunnelFailureKind] = [
+    static let expectedKinds: [FTPConnectionFailure.Kind: TunnelFailureKind] = [
         .greetingRefused: .connectionFailed,
         .timedOut: .connectionFailed,
         .connectionClosed: .connectionFailed,

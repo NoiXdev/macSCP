@@ -1809,6 +1809,25 @@ public final class TransferQueueViewModel {
         // case needs an arm in both view models' mappings.
         case RemoteFSError.crossBucketRenameRefused:
             return .crossBucketRenameRefused
+        // The third mapping of this shape (Task 8 review, finding 2). A raw
+        // `FTPConnectionFailure` reaches this switch from the lease acquire in
+        // `FTPFileSystem.readStream`/`write`, which sits outside the wrap that
+        // would have made it a `RemoteFSError`; without an arm it fell to the
+        // `default:` below and read as the bridged case index. Its sentence is
+        // the CATALOGUE `message`, in the user's language, because this status
+        // is rendered; the fixed-English `logSentence` is the log's. A refused
+        // login is `authenticationFailed`, as the dial mapper reads it.
+        case let failure as FTPConnectionFailure:
+            switch failure.kind.reading {
+            case .authentication:
+                return .authenticationFailed
+            case .connection:
+                return .connectionFailed(detail: URLText.withoutUserinfo(failure.message))
+            case .answerUnusable:
+                return .protocolError(detail: URLText.withoutUserinfo(failure.message))
+            case .local:
+                return .unknown(detail: URLText.withoutUserinfo(failure.message))
+            }
         default:
             if isLostConnection(error) { return .connectionLost }
             return .unknown(

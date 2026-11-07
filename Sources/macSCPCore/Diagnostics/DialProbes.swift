@@ -584,19 +584,11 @@ public enum DialSupport {
     /// use is `serverAnswerUnusable`. macSCP's own guards and local faults
     /// are `unknown`, as for every error a forwarding does not produce.
     private static func tunnelKind(ofFTP kind: FTPConnectionFailure.Kind) -> TunnelFailureKind {
-        switch kind {
-        case .loginRefused:
-            return .authenticationFailed
-        case .greetingRefused, .timedOut, .connectionClosed, .tlsUpgradeRefused,
-            .tlsHandshakeFailed, .certificateRejected, .certificateMismatch,
-            .dataCertificateDiffers, .sessionRefusedByTLS:
-            return .connectionFailed
-        case .protocolViolation, .binaryModeRefused, .passiveAddressRefused,
-            .passiveModeRefused, .transferRefused, .restRefused:
-            return .serverAnswerUnusable
-        case .credentialNotSendable, .trustStoreUnreadable, .sessionFromAnotherConnection,
-            .leaseAlreadyReturned:
-            return .unknown
+        switch kind.reading {
+        case .authentication: return .authenticationFailed
+        case .connection: return .connectionFailed
+        case .answerUnusable: return .serverAnswerUnusable
+        case .local: return .unknown
         }
     }
 

@@ -115,6 +115,13 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// neither of them leaves it.
     private static func connectFailure(_ error: any Error) -> any Error {
         guard let failure = error as? FTPConnectionFailure else { return error }
+        // A refused login keeps its identity, as S3's 403 does
+        // (`S3FileSystem` maps it to `.authenticationFailed`): the form, the
+        // audit reason and the diagnostics classify by it, and flattening it
+        // into `connectionFailed` made a wrong password read as a network
+        // fault. `.authenticationFailed` carries no payload, so nothing can
+        // travel in it.
+        if failure.kind.reading == .authentication { return RemoteFSError.authenticationFailed }
         return RemoteFSError.connectionFailed(reason: failure.message)
     }
 
@@ -166,6 +173,16 @@ public final class FTPFileSystem: RemoteFileSystem {
         if case .transferRefused(let code) = failure, code == Self.fileUnavailable {
             return RemoteFSError.notFound(path: path)
         }
+        // BEFORE the connection-loss reading below, and without touching it.
+        // `loginRefused` is on the `false` side of `leavesConnectionInStep`
+        // (nothing established the stream's state after it), so it would
+        // become `connectionFailed`, `isConnectionFailure` would answer
+        // `true`, and the queue would resume a transfer a password will never
+        // let through. That path is unreachable today -- the only login during
+        // a transfer is inside the lease acquire, outside this wrap -- and
+        // this keeps it so for whoever moves the acquire. The pool's reuse
+        // decision (`leavesConnectionInStep`) is unchanged.
+        if failure.kind.reading == .authentication { return RemoteFSError.authenticationFailed }
         guard failure.leavesConnectionInStep else {
             return RemoteFSError.connectionFailed(reason: failure.message)
         }

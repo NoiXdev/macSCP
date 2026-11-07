@@ -292,6 +292,45 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
             }
         }
 
+        /// What a failure of this kind MEANS to whoever reports it, in four
+        /// readings that every surface classifies by: the dial mapper's
+        /// `TunnelFailureKind`, the transfer queue's `TransferFailureKind` and
+        /// the browser banner's frame. One `switch` here, so the three cannot
+        /// disagree about what a refused login is.
+        ///
+        /// Not `leavesConnectionInStep`, and deliberately not derived from it:
+        /// that answers a different question (may the pool reuse this control
+        /// connection) and moving either to follow the other would change the
+        /// reuse decision.
+        enum Reading: Sendable {
+            /// The server refused the credentials.
+            case authentication
+            /// The connection ended or was refused: the greeting, the clock,
+            /// the TLS upgrade and every certificate verdict.
+            case connection
+            /// The server ANSWERED something this client cannot use.
+            case answerUnusable
+            /// macSCP's own guard or a local fault.
+            case local
+        }
+
+        var reading: Reading {
+            switch self {
+            case .loginRefused:
+                return .authentication
+            case .greetingRefused, .timedOut, .connectionClosed, .tlsUpgradeRefused,
+                .tlsHandshakeFailed, .certificateRejected, .certificateMismatch,
+                .dataCertificateDiffers, .sessionRefusedByTLS:
+                return .connection
+            case .protocolViolation, .binaryModeRefused, .passiveAddressRefused,
+                .passiveModeRefused, .transferRefused, .restRefused:
+                return .answerUnusable
+            case .credentialNotSendable, .trustStoreUnreadable, .sessionFromAnotherConnection,
+                .leaseAlreadyReturned:
+                return .local
+            }
+        }
+
         /// This kind as one fixed ENGLISH sentence, for the places that are
         /// not localized: the diagnostic log, the diagnosis report and the
         /// payload of a typed failure cause (Ruling T8.5).

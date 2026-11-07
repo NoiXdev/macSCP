@@ -1486,6 +1486,23 @@ public final class RemoteBrowserViewModel {
         case RemoteFSError.connectionFailed:
             return String(
                 format: CoreL10n.string("core.error.connectionLost %@"), DialSupport.reason(for: error))
+        // A raw FTP failure (Task 8 review): `FTPFileSystem` wraps only a
+        // transfer's, so a listing or a `stat` after the connection went away
+        // arrives as itself. The same frames the `RemoteFSError` arms above
+        // use, filled with the failure's CATALOGUE sentence (the banner is
+        // rendered, so it is the user's language; the log gets
+        // `DialSupport.reason`'s fixed English from `load()`'s catch).
+        case let failure as FTPConnectionFailure:
+            switch failure.kind.reading {
+            case .authentication:
+                return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
+            case .connection:
+                return String(format: CoreL10n.string("core.error.connectionLost %@"), failure.message)
+            case .answerUnusable:
+                return String(format: CoreL10n.string("core.browse.protocolError %@"), failure.message)
+            case .local:
+                return String(format: CoreL10n.string("core.error.unexpected %@"), failure.message)
+            }
         // Never the error's own description (final review of the 2026-09-19
         // small follow-ups): an `NSError`'s description prints its whole
         // `userInfo`, the failing URL among it, and this text is written to
