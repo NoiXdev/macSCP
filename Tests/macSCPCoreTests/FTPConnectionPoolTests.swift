@@ -42,20 +42,31 @@ struct FTPConnectionPoolTests {
     /// fresh one per call: `FTPPoolBudget` is process-wide by design (spec
     /// §5a), so two tests sharing an account would share a refusal count and
     /// the second would read the first's shrink.
+    /// `security`, `trustStore` and `tuning` default to what every case here
+    /// needed before the concurrent-close case: plain FTP, no store, and the
+    /// shipped tuning. That case needs TLS (only a TLS close waits for the
+    /// peer), a store holding the server's own certificate (so a `.refusing`
+    /// decider is never consulted) and the keepalive off (a `NOOP` into a deaf
+    /// server would end the connection on its reply bound while the case is
+    /// watching the closes).
     private static func pool(
         _ server: LoopbackFTPServer, host: String, port: Int, slots: Int,
-        account: String? = nil
+        account: String? = nil,
+        security: FTPSecurityMode = .plain,
+        trustStore: TrustedCertificateStore? = nil,
+        tuning: FTPControlConnection.Tuning = .default
     ) -> FTPConnectionPool {
         let credentials = server.credentials
         return FTPConnectionPool(
             config: FTPConnectionConfig(
                 host: host, port: port, username: account ?? credentials.username,
-                security: .plain, password: ""),
+                security: security, password: ""),
             password: credentials.password,
             transferSlots: slots,
             certificateDecider: .refusing,
             timeout: .seconds(30),
-            trustStore: nil)
+            trustStore: trustStore,
+            tuning: tuning)
     }
 
     private static let seededName = "/payload.bin"
@@ -633,6 +644,109 @@ struct FTPConnectionPoolTests {
         }
         #expect(counts.before == 4)
         #expect(counts.after == 0)
+    }
+
+    /// **`shutdown()` closes the pool's connections AT ONCE, not one after
+    /// another — and this is what a serial close fails.**
+    ///
+    /// The case above measures that every connection is closed and says
+    /// nothing about when, which the re-review measured: putting the serial
+    /// `for connection in open { await connection.close() }` back, verbatim,
+    /// ran 14 tests with 0 pre-existing failures and came back GREEN. Ruling
+    /// W1's whole argument is the WHEN — a pool holds up to
+    /// `maxConcurrentTransfers + 1` connections and an FTPS close against a
+    /// peer that stops answering is capped near NIOSSL's five-second
+    /// `shutdownTimeout`, so in series that teardown stage was up to nine of
+    /// those against a `QuitWatchdog.bound` of fifteen seconds.
+    ///
+    /// **It measures OVERLAP and not elapsed time**, which is deliberate:
+    /// "three closes took less than three times one close" is a wall-clock
+    /// ceiling, red on a loaded runner and green on a fast one, and CLAUDE.md
+    /// has a section about exactly that. The property asserted here is a
+    /// STATE — every connection's close has begun while none of them has
+    /// finished — and a serial loop cannot produce it, because the second
+    /// close does not begin until the first has returned. Both waits are
+    /// `pollUntil`; no deadline, no duration, and the suite's
+    /// `.timeLimit(.minutes(5))` is the only bound in sight.
+    ///
+    /// **How a close is held open, and why TLS.** `NIOSSLHandler` writes
+    /// `close_notify` and then waits for the peer's — "We also try to wait for
+    /// the remote peer to send a CloseNotify in response", its own
+    /// `doShutdownStep` — and only `shutdownTimeout` ends that wait. So
+    /// `LoopbackFTPServer.goDeaf()` makes the server a peer that never
+    /// answers: a handler at the head of every pipeline drops inbound bytes
+    /// before the TLS handlers can see them. Each client close then stays in
+    /// flight, and the bytes the gate dropped are the signal that it began.
+    /// A plain-FTP close is a local TCP close and returns at once, so it could
+    /// not be observed this way at all.
+    ///
+    /// **The poll's exit condition is a disjunction on purpose**: it ends when
+    /// every close has begun OR any has completed, so the serial case ends
+    /// itself after one close's `shutdownTimeout` with a failed expectation
+    /// rather than running into the suite's hang bound. The three positives
+    /// beside the two properties are the connection count before the
+    /// shutdown, that it is more than one (a one-connection pool cannot tell
+    /// the two shapes apart), and that the shutdown really did finish.
+    @Test func shutdownClosesTheConnectionsAtOnceRatherThanOneAfterAnother() async throws {
+        let server = LoopbackFTPServer(
+            security: .implicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-ftppool-trust-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TrustedCertificateStore(directory: directory)
+
+        let measured = try await Self.running(server) { host, port in
+            // Pinned to the server's OWN certificate, so the dial's TOFU
+            // accepts silently and the `.refusing` decider is never asked.
+            let presented = try #require(await server.leafCertificateDER)
+            try store.upsert(
+                TrustedCertificate(
+                    host: host, port: port, derBase64: presented.base64EncodedString(),
+                    subject: "loopback", issuer: "loopback", notAfter: nil))
+            let pool = Self.pool(
+                server, host: host, port: port, slots: 2,
+                security: .implicitTLS, trustStore: store,
+                tuning: FTPControlConnection.Tuning(keepaliveInterval: .seconds(0)))
+            _ = try await pool.command()
+            var leases: [FTPTransferLease] = []
+            for _ in 0..<2 { leases.append(try await pool.acquireTransfer()) }
+            for lease in leases { await lease.release(reusable: true) }
+            let open = await server.liveChannelCount
+
+            await server.goDeaf()
+            let shutdown = Task { await pool.shutdown() }
+            try await pollUntil("every close to have begun, or one of them to have finished") {
+                // Each read into a local first: an `await` cannot sit to the
+                // right of `||`, and reading both every time keeps the two
+                // halves of the disjunction one poll apart at most.
+                let begun = await server.connectionsWhoseCloseHasBegun
+                let live = await server.liveChannelCount
+                return begun == open || live < open
+            }
+            let begun = await server.connectionsWhoseCloseHasBegun
+            let stillOpen = await server.liveChannelCount
+            await shutdown.value
+            // Polled rather than read once: the client's close returns when
+            // ITS side is done, and the server learns of it on its own event
+            // loop one EOF later. Measured: read immediately after
+            // `shutdown.value` this came back 1 of 3.
+            try await pollUntil("the server to see every connection go") {
+                await server.liveChannelCount == 0
+            }
+            let finished = await server.liveChannelCount
+            return (open: open, begun: begun, stillOpen: stillOpen, finished: finished)
+        }
+        // The positive the two properties rest on: three control connections,
+        // and more than one, so "all at once" is distinguishable from "one
+        // after another" at all.
+        #expect(measured.open == 3)
+        #expect(measured.open > 1)
+        // The two properties: every close in flight, and none of them done.
+        #expect(measured.begun == measured.open)
+        #expect(measured.stillOpen == measured.open)
+        // And the shutdown ran to its end rather than being abandoned.
+        #expect(measured.finished == 0)
     }
 
     // MARK: - The 421 budget

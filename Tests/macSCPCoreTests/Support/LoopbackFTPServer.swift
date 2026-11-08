@@ -75,6 +75,16 @@ final class LoopbackFTPState: Sendable {
         var omitChmodFromNextSiteHelp = false
         var nextListingPayload: Data?
 
+        /// Set by `goDeaf()`: from then on `LoopbackDeafGate` DROPS every
+        /// inbound byte on every connection instead of forwarding it, so
+        /// nothing downstream — the TLS handlers included — ever sees it.
+        var deaf = false
+        /// The channels that delivered inbound bytes AFTER `deaf` was set.
+        /// On an idle control connection the only thing left to arrive is the
+        /// peer's TLS `close_notify`, so membership here means "this
+        /// connection's close has BEGUN" — see `goDeaf()`.
+        var inboundAfterDeaf: Set<ObjectIdentifier> = []
+
         var commands: [LoopbackFTPReceivedCommand] = []
         var handshakes: [LoopbackFTPHandshake] = []
         var controlConnections = 0
@@ -385,6 +395,10 @@ actor LoopbackFTPServer {
                             // in its writer's deinit.
                             guard state.track(channel) else { return }
                             let pipeline = channel.pipeline.syncOperations
+                            // FIRST, so it sits closest to the head and sees
+                            // the raw bytes before the TLS handlers decrypt
+                            // them. Transparent until `goDeaf()`.
+                            try pipeline.addHandler(LoopbackDeafGate(state: state))
                             if configuration.security == .implicitTLS, let context {
                                 let tls = LoopbackTLSHandlers(
                                     context: context, eventLoop: channel.eventLoop,
@@ -736,6 +750,39 @@ actor LoopbackFTPServer {
         state.box.withLockedValue { $0.controlConnections }
     }
 
+    /// Stops delivering inbound bytes to anything downstream, on every
+    /// connection, from now on. Not one shot and not reversible: a server that
+    /// has gone deaf stays deaf for the rest of its life.
+    ///
+    /// **What it is for, and it is one property rather than a general-purpose
+    /// seam.** A TLS close is a two-way goodbye: `NIOSSLHandler` writes
+    /// `close_notify` and then WAITS for the peer's, and only
+    /// `TLSConfiguration`'s `shutdownTimeout` ends that wait if the peer never
+    /// answers ("We also try to wait for the remote peer to send a CloseNotify
+    /// in response", `NIOSSLHandler.doShutdownStep`). A deaf server is a peer
+    /// that never answers, which is the only way this fixture can hold a
+    /// client's close open long enough for a test to see several of them in
+    /// flight at once — `FTPConnectionPoolTests
+    /// .shutdownClosesTheConnectionsAtOnceRatherThanOneAfterAnother`, which is
+    /// what pins Ruling W1's concurrent close.
+    ///
+    /// It drops bytes rather than closing anything, because a close would end
+    /// the client's wait at once and measure nothing.
+    func goDeaf() {
+        state.box.withLockedValue { $0.deaf = true }
+    }
+
+    /// How many connections have delivered inbound bytes since `goDeaf()`.
+    ///
+    /// **Read as "whose close has begun", and that reading is only sound after
+    /// `goDeaf()` on an idle connection**, which is where it is used: nothing
+    /// is being sent by the client at that point except the `close_notify` its
+    /// own close writes. It is a count of CHANNELS and not of reads, so a
+    /// `close_notify` split across two TCP segments counts once.
+    var connectionsWhoseCloseHasBegun: Int {
+        state.box.withLockedValue { $0.inboundAfterDeaf.count }
+    }
+
     /// Channels this server is holding open RIGHT NOW — control connections,
     /// passive listeners and data connections alike, as `track(_:)` records
     /// them and their close futures remove them.
@@ -965,6 +1012,44 @@ final class LoopbackHandshakeGate: ChannelInboundHandler, @unchecked Sendable {
         guard !finished else { return }
         finished = true
         promise.fail(ChannelError.ioOnClosedChannel)
+    }
+}
+
+/// Forwards every inbound byte until the server goes deaf, and then forwards
+/// none and records which channel the bytes arrived on.
+///
+/// **Transparent by default**, which is what lets it sit in every connection's
+/// pipeline unconditionally: `deaf` starts `false` and this handler then does
+/// exactly what the absence of a handler would. `LoopbackFTPServer.goDeaf()` is
+/// the only thing that sets it, and it says what the whole arrangement is for.
+///
+/// **It sits at the HEAD, before the TLS handlers**, so what it drops is raw
+/// ciphertext — a `close_notify` dropped here never reaches the server's own
+/// `NIOSSLHandler` and so is never answered, which is the point. Added first in
+/// the child-channel initializer, since `addHandler` appends.
+///
+/// `@unchecked Sendable` for `LoopbackActivationAnnouncer`'s reason: NIO calls
+/// this on the channel's event loop, and the only state it touches is the
+/// server's own `NIOLockedValueBox`.
+final class LoopbackDeafGate: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
+
+    private let state: LoopbackFTPState
+
+    init(state: LoopbackFTPState) {
+        self.state = state
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let identifier = ObjectIdentifier(context.channel)
+        let dropped = state.box.withLockedValue { inner -> Bool in
+            guard inner.deaf else { return false }
+            inner.inboundAfterDeaf.insert(identifier)
+            return true
+        }
+        guard !dropped else { return }
+        context.fireChannelRead(data)
     }
 }
 
