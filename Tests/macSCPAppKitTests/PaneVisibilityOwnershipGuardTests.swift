@@ -82,32 +82,95 @@ struct PaneVisibilityOwnershipGuardTests {
         #expect(files.count > flat, "the App walk no longer descends")
     }
 
-    /// The files that own the property, exempted from the scan below.
-    ///
-    /// Bare file names on purpose, for the reason the guard's own doc comment
-    /// gives: a second file of either name under this target cannot exist,
-    /// and the bare name keeps exempting an owner that moves into a
-    /// subdirectory where a relative path would go red for no violation.
-    private static let exemptedOwners: Set<String> = [
-        "SessionTab.swift", "SessionInstallation.swift",
-    ]
-
-    /// The positive check the exemption owes: every name on it is a file the
-    /// walk found. Without this, renaming or deleting an owner leaves a name
-    /// on the list matching nothing, and the negative check below silently
-    /// covers one more file than it is documented to.
-    @Test func theExemptedOwnersAreFilesTheWalkFinds() throws {
-        let found = Set(try Self.appSwiftFiles().map(\.lastPathComponent))
-        let missing = Self.exemptedOwners.subtracting(found).sorted()
-        #expect(missing.isEmpty, """
-            \(missing) are exempted from `onlySessionTabReadsShowsFilesOffTheSession` but \
-            the App walk finds no such file. An exemption that matches nothing widens the \
-            negative check it stands beside.
-            """)
+    /// Collapses runs of spaces and tabs, the way `ReconnectWiringGuardTests`
+    /// normalizes a sanctioned line, so the declared reads below are
+    /// indentation-independent.
+    private static func normalized(_ line: String) -> String {
+        line.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ")
     }
 
-    /// The guard: the two files below own this property, nobody else touches
-    /// it.
+    /// One sanctioned READ, not one exempted file.
+    private struct SanctionedRead {
+        /// Path relative to the App target, as `relativePath(of:)` prints it
+        /// — a path and not a bare file name, see below.
+        let file: String
+        /// The line as it must read after comments are blanked and
+        /// whitespace normalized.
+        let code: String
+        /// How many times that exact line may appear in that file, so a
+        /// SECOND line spelled identically cannot ride on the allowance.
+        let occurrences: Int
+        let reason: String
+    }
+
+    /// The reads that own this property. Two lines, in two files.
+    ///
+    /// (Withdrawn: this used to exempt whole FILES —
+    /// `private static let exemptedOwners: Set<String> = ["SessionTab.swift",
+    /// "SessionInstallation.swift"]` — with the reason, verbatim: "Bare file
+    /// names on purpose, for the reason the guard's own doc comment gives: a
+    /// second file of either name under this target cannot exist, and the bare
+    /// name keeps exempting an owner that moves into a subdirectory where a
+    /// relative path would go red for no violation." Both halves are
+    /// withdrawn. The exemption admitted everything in both files: the
+    /// re-review of fix round 2 planted `let zzSession = built` plus
+    /// `_ = zzSession.showsFiles` inside BOTH of them and the suite was
+    /// **GREEN** against its 5 tests, while the same two lines in non-exempt
+    /// `ContentView.swift` were **RED** — both reproduced by fix round 3. And
+    /// the bare name was matched with `lastPathComponent`, so a same-named
+    /// file in a subdirectory would have been exempt with
+    /// `theExemptedOwnersAreFilesTheWalkFinds` still passing. No duplicate
+    /// basenames exist under this target today
+    /// (`/usr/bin/find Sources/MacSCPAppKit -name '*.swift' -exec basename {}
+    /// \; | sort | uniq -d` prints nothing, exit 0), which is why it was
+    /// latent and not live.)
+    ///
+    /// What replaces it is the same instrument `ReconnectWiringGuardTests`
+    /// uses for a sanctioned site: a path, a line, a count and a reason. The
+    /// owning files are scanned like every other file; the two lines below are
+    /// the only ones their scan may produce.
+    private static let sanctionedReads: [SanctionedRead] = [
+        SanctionedRead(
+            file: "SessionTab.swift",
+            code: "get { session?.showsFiles ?? true }",
+            occurrences: 1,
+            reason:
+                "`SessionTab.showsFiles`'s getter — the one way IN, which is what the rest of the App layer is held to. It reads through the stored property on the installed session rather than off a struct copy, which is the property this guard is about."),
+        SanctionedRead(
+            file: "SessionInstallation.swift",
+            code: "session?.showsFiles = value",
+            occurrences: 1,
+            reason:
+                "`SessionInstallation.setShowsFiles(_:)` — the one way OUT, reached only through `SessionTab.showsFiles`'s setter. It moved here from `SessionTab` with the session storage in fix round 2 of Task 8 (Ruling T8.8); it writes THROUGH the stored property, so it is not a read of a copy either."),
+    ]
+
+    /// The positive check the allowance owes, in the shape
+    /// `everySanctionedSiteStillExistsExactlyAsOftenAsDeclared` has: every
+    /// declared read must still be in its file, exactly as often as claimed.
+    ///
+    /// A count of 0 means the line moved and the allowance has stopped
+    /// describing the code; a count of 2 means a second line spelled
+    /// identically is riding on it. A path that no longer resolves throws out
+    /// of `commentFree(of:)`, which is a loud failure and not a silent
+    /// widening — the failure mode the withdrawn
+    /// `theExemptedOwnersAreFilesTheWalkFinds` existed for, now covered by the
+    /// same check that covers the line.
+    @Test func everySanctionedShowsFilesReadStillExistsExactlyAsOftenAsDeclared() throws {
+        for read in Self.sanctionedReads {
+            let url = Self.appSources.appendingPathComponent(read.file)
+            let matches = try SourceCorpus.commentFree(of: url)
+                .components(separatedBy: "\n")
+                .filter { Self.normalized($0) == read.code }
+                .count
+            #expect(matches == read.occurrences, """
+                `\(read.code)` appears \(matches) time(s) in \(read.file), expected \
+                \(read.occurrences). Sanctioned for: \(read.reason)
+                """)
+        }
+    }
+
+    /// The guard: the two LINES on `sanctionedReads` own this property,
+    /// nobody else touches it.
     ///
     /// Two since fix round 2 of Task 8 (Ruling T8.8), which moved the session
     /// storage itself out of `SessionTab` and behind `SessionInstallation`, a
@@ -119,11 +182,15 @@ struct PaneVisibilityOwnershipGuardTests {
     /// reads a struct COPY, which is what this guard is about: both write
     /// through the stored property.
     ///
-    /// `exemptedOwners` is asserted to MATCH files the walk actually found
-    /// (`theExemptedOwnersAreFilesTheWalkFinds`), because an exemption naming
-    /// a file that no longer exists would quietly widen a negative check —
-    /// the shape CLAUDE.md's "only a NEGATIVE check can go stale in silence"
-    /// is about, arriving through the exclusion list rather than through the
+    /// **Lines and not files, since fix round 3 of Task 8.** Round 2 exempted
+    /// the two owning FILES, which exempted everything in them: a planted
+    /// read of a copy inside either one was GREEN, measured twice. The
+    /// allowance is now one entry per read, with a path, a count and a
+    /// reason, and `everySanctionedShowsFilesReadStillExistsExactlyAsOftenAsDeclared`
+    /// is the positive check beside it — an allowance that has stopped
+    /// matching is red there, rather than quietly widening this negative
+    /// check, which is CLAUDE.md's "only a NEGATIVE check can go stale in
+    /// silence" arriving through an exclusion list rather than through a
     /// pattern.
     ///
     /// Reads `commentFree(of:)`, not `text(of:)` and not `code(of:)`. Not
@@ -149,31 +216,44 @@ struct PaneVisibilityOwnershipGuardTests {
     /// the same length in `Character`s — `SourceCorpus.lengthCheckedView`
     /// refuses one that is not — so the offender line numbers are unchanged.
     ///
-    /// The exemption stays a bare file name on purpose. A second
-    /// `SessionTab.swift` under this target — the case a relative path
-    /// would guard against — cannot exist: with `--build-system native`
-    /// SwiftPM maps both to one object path and the build fails with
-    /// "multiple producers" (measured 2026-10-05; the default build system
-    /// was not exercised, SwiftTerm's `Shaders.metal` breaks it here). The
-    /// only case the two spellings part company on is the owner moving into
-    /// a subdirectory, and there the bare name keeps exempting it, where a
-    /// relative path would go red for no violation.
+    /// (Withdrawn, verbatim: "The exemption stays a bare file name on
+    /// purpose. A second `SessionTab.swift` under this target — the case a
+    /// relative path would guard against — cannot exist: with
+    /// `--build-system native` SwiftPM maps both to one object path and the
+    /// build fails with \"multiple producers\" (measured 2026-10-05; the
+    /// default build system was not exercised, SwiftTerm's `Shaders.metal`
+    /// breaks it here). The only case the two spellings part company on is
+    /// the owner moving into a subdirectory, and there the bare name keeps
+    /// exempting it, where a relative path would go red for no violation."
+    /// The 2026-10-05 measurement is not withdrawn — it still says what it
+    /// says about two same-named files. What is withdrawn is the preference
+    /// read off it: an owner that moves into a subdirectory is now red HERE,
+    /// in the positive check, which is where a moved allowance should be
+    /// read, and the one-line fix for it is the new path. The bare name's
+    /// cost was that it was matched with `lastPathComponent`, so it could
+    /// not tell those two spellings apart at all.)
     @Test func onlySessionTabReadsShowsFilesOffTheSession() throws {
         let files = try Self.appSwiftFiles()
-            .filter { Self.exemptedOwners.contains($0.lastPathComponent) == false }
         #expect(files.count > 1, "re-anchor: no App sources found to scan")
 
         var offenders: [String] = []
         for file in files {
+            let relative = Self.relativePath(of: file)
             let lines = try SourceCorpus.commentFree(of: file).components(separatedBy: "\n")
             for (index, line) in lines.enumerated() where Self.readsShowsFilesOffASession(line) {
-                offenders.append("\(Self.relativePath(of: file)):\(index + 1)")
+                let code = Self.normalized(line)
+                let sanctioned = Self.sanctionedReads.contains {
+                    $0.file == relative && $0.code == code
+                }
+                if !sanctioned { offenders.append("\(relative):\(index + 1): \(code)") }
             }
         }
         #expect(offenders.isEmpty, """
             \(offenders) read `showsFiles` off a `BrowserSession` value. That value is a \
             struct COPY, so the read sees a snapshot rather than the tab's current state — \
-            go through `SessionTab.showsFiles`, which is the only way in and out.
+            go through `SessionTab.showsFiles`, which is the only way in and out. If one of \
+            these really is a new owning read, add it to `sanctionedReads` WITH a reason; no \
+            file is exempt as a whole.
             """)
     }
 
