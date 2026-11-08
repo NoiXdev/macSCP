@@ -15,15 +15,20 @@ enum ImportPreviewPresentation {
         return bookmark.host.isEmpty ? bookmark.fileName : bookmark.host
     }
 
-    /// The protocol badge. For the two protocols macSCP speaks it is the
-    /// backend's OWN badge — the same text the sidebar and the tab strip
-    /// put on a session of that kind, rather than a second spelling of it
-    /// here. A protocol macSCP has no backend for has no descriptor to read
-    /// from, so the source's own name is shown as the source wrote it.
+    /// The protocol badge. For a protocol macSCP speaks it is the backend's
+    /// OWN badge — the same text the sidebar and the tab strip put on a
+    /// session of that kind, rather than a second spelling of it here. A
+    /// protocol macSCP has no backend for has no descriptor to read from, so
+    /// the source's own name is shown as the source wrote it.
+    ///
+    /// (Withdrawn wording, verbatim: "For the two protocols macSCP speaks".
+    /// There are three readable here since 2026-11-08, when FTP bookmarks
+    /// became importable.)
     static func badge(for bookmark: ExternalBookmark) -> String {
         switch bookmark.protocol {
         case .sftp: return badge(for: .ssh)
         case .s3: return badge(for: .s3)
+        case .ftp: return badge(for: .ftp)
         case .unsupported(let name): return name.uppercased()
         }
     }
@@ -33,9 +38,16 @@ enum ImportPreviewPresentation {
         return L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
     }
 
-    /// The target column: `user@host:port` for a shell connection, endpoint
-    /// and bucket for an S3 one. An S3 bookmark with an empty `Path` opens
-    /// at the bucket list, which is a target too and says so.
+    /// The target column: `user@host:port` for anything addressed by a host
+    /// and an account — sftp, ftp, and a protocol with no backend, whose
+    /// bookmark still carries those fields — and endpoint plus bucket for an
+    /// S3 one. An S3 bookmark with an empty `Path` opens at the bucket list,
+    /// which is a target too and says so.
+    ///
+    /// (Withdrawn wording, verbatim: "`user@host:port` for a shell
+    /// connection". FTP joined that arm on 2026-11-08 and is not a shell
+    /// connection; what the arm has in common is the ADDRESS, not the
+    /// protocol.)
     static func target(for bookmark: ExternalBookmark) -> String {
         switch bookmark.protocol {
         case .s3:
@@ -46,7 +58,7 @@ enum ImportPreviewPresentation {
                 bucket.isEmpty
                     ? L10n.string("import.cyberduck.target.allBuckets", "all buckets")
                     : bucket)
-        case .sftp, .unsupported:
+        case .sftp, .ftp, .unsupported:
             var text = bookmark.host
             if let username = bookmark.username, !username.isEmpty {
                 text = "\(username)@\(text)"

@@ -1647,6 +1647,7 @@
 "import.field.authKind" = "Anmeldeart";
 "import.field.endpoint" = "Endpunkt";
 "import.field.bucket" = "Bucket";
+"import.field.initialPath" = "Startordner";
 "import.field.name" = "Name";
 "import.field.labels" = "Labels";
 "import.result.updated %lld" = "Aktualisierte vorhandene Sitzungen: %lld";

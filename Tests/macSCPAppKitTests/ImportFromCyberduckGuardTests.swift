@@ -317,10 +317,29 @@ struct ImportFromCyberduckGuardTests {
         }
     }
 
-    /// The nine change-list keys, read off the type that composes them. A
-    /// tenth added in Core without a catalog entry fails the test above
-    /// without anyone having to remember this list, because there is no
-    /// list.
+    /// The change-list keys, read off the type that composes them rather
+    /// than spelled as catalog strings: a renamed `FieldKey` property fails
+    /// to COMPILE here instead of leaving a check that matches nothing.
+    ///
+    /// (Withdrawn wording, verbatim: "The nine change-list keys, read off
+    /// the type that composes them. A tenth added in Core without a catalog
+    /// entry fails the test above without anyone having to remember this
+    /// list, because there is no list." Two corrections. The count is ten
+    /// since `FieldKey.initialPath` landed on 2026-11-08; its command is
+    /// below, written the way it is because the obvious one for it matched
+    /// its own quotation of itself and printed 12. And the second half was
+    /// false of itself: this IS a
+    /// list, so a key added in Core is NOT covered until someone adds it
+    /// here. That is the cost of reading the keys off the type, and it is
+    /// paid knowingly — the alternative is a literal that survives a
+    /// rename.)
+    ///
+    /// The count, from the repository root. `grep -c` and not `grep -o |
+    /// wc -l` because each entry below really is one line, which is the one
+    /// case where counting lines is counting occurrences; the leading
+    /// anchor is what keeps this prose from matching itself.
+    ///
+    ///     /usr/bin/grep -c '^        ImportPreviewPlanner' Tests/macSCPAppKitTests/ImportFromCyberduckGuardTests.swift
     private static let fieldKeys: Set<String> = [
         ImportPreviewPlanner.FieldKey.host,
         ImportPreviewPlanner.FieldKey.port,
@@ -329,6 +348,7 @@ struct ImportFromCyberduckGuardTests {
         ImportPreviewPlanner.FieldKey.authKind,
         ImportPreviewPlanner.FieldKey.endpoint,
         ImportPreviewPlanner.FieldKey.bucket,
+        ImportPreviewPlanner.FieldKey.initialPath,
         ImportPreviewPlanner.FieldKey.name,
         ImportPreviewPlanner.FieldKey.labels,
     ]

@@ -1652,6 +1652,7 @@
 "import.field.authKind" = "Login method";
 "import.field.endpoint" = "Endpoint";
 "import.field.bucket" = "Bucket";
+"import.field.initialPath" = "Initial folder";
 "import.field.name" = "Name";
 "import.field.labels" = "Labels";
 "import.result.updated %lld" = "Existing sessions updated: %lld";

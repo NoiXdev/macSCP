@@ -293,14 +293,145 @@ struct ImportPreviewPlannerTests {
         #expect(changes.first?.new == "staging")
     }
 
+    // MARK: - FTP became importable (2026-11-08)
+
+    /// A Cyberduck FTP bookmark used to be *"Greyed and counted, never
+    /// imported"*. It is now an ordinary row: `.new` against an empty store,
+    /// selectable, ticked by default, and it reaches the payload as an
+    /// `.ftp` session carrying the bookmark's own host, port and user name.
+    ///
+    /// The security mode is deliberately NOT read from the bookmark: no
+    /// bookmark says whether the server speaks TLS, so a new session takes
+    /// the backend's own default, the same way an imported S3 session takes
+    /// the schema's `region` rather than inventing one.
+    @Test func aCyberduckFTPBookmarkIsNowImportableRatherThanGreyed() throws {
+        var rows = ImportPreviewPlanner.preview(
+            [ftpBookmark()], against: [], switches: ImportSwitches())
+
+        let row = try #require(rows.first)
+        #expect(row.status == .new)
+        #expect(row.isSelectable)
+        #expect(row.selected)
+
+        for index in rows.indices { rows[index].selected = true }
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: ImportSwitches())
+        #expect(payload.sessions.count == 1)
+        let exported: ExportedSession? = payload.sessions.first
+        #expect(exported?.kind == .ftp)
+        #expect(exported?.name == "Uploads")
+        // Bound before the macro: an FTP bookmark carries a host and a user
+        // name, and `#expect` reports what its operands evaluated to.
+        let carriesTheConnection = exported.map {
+            field(FTPField.host, of: $0) == Self.ftpHost
+                && field(FTPField.port, of: $0) == String(Self.ftpPort)
+                && field(FTPField.username, of: $0) == Self.ftpAccount
+        }
+        #expect(carriesTheConnection == true)
+        // The backend's own default, read off the schema rather than spelled
+        // here: a changed default must not leave this test asserting the old
+        // one.
+        let security = exported.map { field(FTPField.security, of: $0) }
+        #expect(security == FTPFieldSchema.defaults[FTPField.security])
+        // Provenance, so a second run recognises the record rather than
+        // creating a second one.
+        #expect(exported?.importSource == CyberduckBookmarkSource.id)
+        #expect(exported?.importID == ftpBookmark().id)
+    }
+
+    /// The other side of the same change: a protocol this project still has
+    /// no backend for is still refused, and still under the source's own
+    /// name. `"smb"` took `"ftp"`'s place as this suite's example of one.
+    ///
+    /// Both halves in one test: without the FTP row beside it, a planner
+    /// that had stopped translating anything at all would satisfy the
+    /// refusal on its own.
+    @Test func anUnsupportedBookmarkIsStillReportedAsUnsupported() throws {
+        let rows = ImportPreviewPlanner.preview(
+            [bookmark(id: "smb-1", protocol: .unsupported("smb"), host: "files.example.net"),
+             ftpBookmark()],
+            against: [], switches: ImportSwitches())
+
+        #expect(rows.count == 2)
+        #expect(rows.first?.status == .unsupported("smb"))
+        #expect(rows.first?.isSelectable == false)
+        // The positive anchor: the planner DOES translate something now.
+        #expect(rows.last?.status == .new)
+        #expect(rows.last?.isSelectable == true)
+    }
+
+    /// A re-import of a bookmark whose server moved reports what it would
+    /// overwrite, FTP included — and keeps the security mode the user
+    /// configured, because the bookmark makes no statement about it.
+    @Test func aMovedFTPBookmarkReportsItsChangedFieldsAndKeepsTheStoredMode() throws {
+        // Matched by PROVENANCE: the port is part of FTP's connection key, so
+        // a bookmark whose port moved matches nothing by key — exactly the
+        // case provenance exists for.
+        let stored = ftpStoredSession(port: 2121, security: .implicitTLS,
+                                      importID: ftpBookmark().id)
+
+        let rows = ImportPreviewPlanner.preview(
+            [ftpBookmark()], against: [stored], switches: ImportSwitches())
+        let row = try #require(rows.first)
+        #expect(row.status.storedSessionID == stored.id)
+        let changes = try #require(changeList(row.status))
+        #expect(changes.map(\.field) == [ImportPreviewPlanner.FieldKey.port])
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
+        let exported: ExportedSession? = payload.sessions.first
+        #expect(exported?.replaces == stored.id)
+        let keptTheMode = exported.map {
+            field(FTPField.security, of: $0) == FTPSecurityMode.implicitTLS.rawValue
+        }
+        #expect(keptTheMode == true)
+    }
+
+    /// Cyberduck keeps an FTP bookmark's starting folder under the same
+    /// `Path` key an S3 bookmark keeps its bucket under, so the FTP arm
+    /// reads it as the initial folder.
+    ///
+    /// The absence of that key is SILENCE, not "the root" — the same rule
+    /// `updateValues(of:kind:over:)` applies to a missing `Private Key
+    /// File`. Both halves here: a bookmark that names a folder writes it,
+    /// and one that names none leaves the folder on record alone AND reports
+    /// no change row about it. Without the second half, an arm that cleared
+    /// the folder on every re-import would satisfy the first.
+    @Test func anFTPBookmarksPathIsItsInitialFolderAndItsAbsenceChangesNothing() throws {
+        let withPath = ImportPreviewPlanner.preview(
+            [ftpBookmark(path: "/htdocs")], against: [], switches: ImportSwitches())
+        let exported: ExportedSession? = ImportPreviewPlanner.payload(
+            for: withPath, sessions: [], groups: [], switches: ImportSwitches()).sessions.first
+        let tookTheFolder = exported.map { field(FTPField.initialPath, of: $0) == "/htdocs" }
+        #expect(tookTheFolder == true)
+
+        // Silent bookmark, stored folder: matched by provenance so the row
+        // is an update, and the update must neither clear the folder nor
+        // claim it would.
+        let stored = ftpStoredSession(initialPath: "/htdocs", importID: ftpBookmark().id)
+        let silent = ImportPreviewPlanner.preview(
+            [ftpBookmark(path: nil)], against: [stored], switches: ImportSwitches())
+        #expect(silent.first?.status == .knownUnchanged(stored.id))
+        var ticked = silent
+        for index in ticked.indices { ticked[index].selected = true }
+        let updated: ExportedSession? = ImportPreviewPlanner.payload(
+            for: ticked, sessions: [stored], groups: [],
+            switches: ImportSwitches()).sessions.first
+        let keptTheFolder = updated.map { field(FTPField.initialPath, of: $0) == "/htdocs" }
+        #expect(keptTheFolder == true)
+    }
+
     // MARK: - Rows nothing can import
 
+    /// The fixture protocol used to be `"ftp"`; it is `"smb"` since FTP
+    /// became a kind this project speaks (2026-11-08), which
+    /// `ConnectionKind`'s own comment already named as a future protocol.
     @Test func anUnsupportedProtocolIsUnselectedAndNotSelectable() throws {
         let row = try #require(ImportPreviewPlanner.preview(
-            [bookmark(protocol: .unsupported("ftp"), host: "files.example.net")],
+            [bookmark(protocol: .unsupported("smb"), host: "files.example.net")],
             against: [], switches: ImportSwitches()).first)
 
-        #expect(row.status == .unsupported("ftp"))
+        #expect(row.status == .unsupported("smb"))
         #expect(row.selected == false)
         #expect(row.isSelectable == false)
         // Positive anchor for the negative check above: a supported row IS
@@ -360,7 +491,7 @@ struct ImportPreviewPlannerTests {
             sftpBookmark(id: "new-1", host: "fresh.example.net"),
             sftpBookmark(id: "known-1", nickname: "Web 01", host: "web-01.example.net",
                          port: 2222, username: "deploy"),
-            bookmark(id: "ftp-1", protocol: .unsupported("ftp"), host: "files.example.net"),
+            bookmark(id: "smb-1", protocol: .unsupported("smb"), host: "files.example.net"),
             ExternalBookmark(
                 id: "broken.duck", source: CyberduckBookmarkSource.id, nickname: nil,
                 protocol: .unsupported(""), host: "", port: nil, username: nil,
@@ -377,7 +508,7 @@ struct ImportPreviewPlannerTests {
             for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
 
         #expect(payload.sessions.count == 2)
-        #expect(payload.sessions.contains { $0.importID == "ftp-1" } == false)
+        #expect(payload.sessions.contains { $0.importID == "smb-1" } == false)
         #expect(payload.sessions.contains { $0.importID == "broken.duck" } == false)
         #expect(payload.sessions.contains { $0.importID == "new-1" })
         #expect(payload.sessions.contains { $0.importID == "known-1" })
@@ -1028,6 +1159,42 @@ struct ImportPreviewPlannerTests {
     ) -> ExternalBookmark {
         bookmark(id: id, protocol: .sftp, nickname: nickname, host: host, port: port,
                  username: username, keyPath: keyPath, labels: labels)
+    }
+
+    /// The FTP bookmark's connection, in named constants: the values reach
+    /// `#expect` only as a `Bool`, so neither the host nor the account name
+    /// is reported on a red run.
+    private static let ftpHost = "files.example.net"
+    private static let ftpPort = 21
+    private static let ftpAccount = "uploader"
+
+    private func ftpBookmark(
+        id: String = "55555555-5555-5555-5555-555555555555",
+        nickname: String? = "Uploads", host: String = ftpHost,
+        port: Int? = ftpPort, username: String? = ftpAccount, path: String? = nil,
+        labels: [String] = []
+    ) -> ExternalBookmark {
+        bookmark(id: id, protocol: .ftp, nickname: nickname, host: host, port: port,
+                 username: username, path: path, labels: labels)
+    }
+
+    /// An FTP session on record. Separate from `SessionFixtures`' own
+    /// `ftpSession`, which takes no provenance — and provenance is what the
+    /// moved-bookmark case turns on.
+    private func ftpStoredSession(
+        id: UUID = UUID(), name: String = "Uploads", host: String = ftpHost,
+        port: Int = ftpPort, username: String = ftpAccount,
+        security: FTPSecurityMode = .explicitTLS, initialPath: String? = nil,
+        importID: String? = nil
+    ) -> StoredSession {
+        StoredSession(
+            id: id, name: name, kind: .ftp,
+            ftp: StoredFTPConfig(
+                host: host, port: port, username: username, security: security,
+                initialPath: initialPath),
+            importSource: importID == nil ? nil : CyberduckBookmarkSource.id,
+            importID: importID,
+            importedAt: importID == nil ? nil : Date(timeIntervalSince1970: 0))
     }
 
     private func s3Bookmark(

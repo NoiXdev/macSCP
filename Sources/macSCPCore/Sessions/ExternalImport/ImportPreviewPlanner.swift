@@ -75,7 +75,13 @@ public enum PreviewStatus: Sendable, Equatable {
     /// A stored session matches and these fields differ.
     case knownChanged(UUID, [FieldChange])
     /// The source's own protocol name for a protocol macSCP has no backend
-    /// for (`"ftp"`, `"davs"`, …). Greyed and counted, never imported.
+    /// for (`"smb"`, `"davs"`, …). Greyed and counted, never imported.
+    ///
+    /// (Withdrawn wording, verbatim: "for (`"ftp"`, `"davs"`, …)". `"ftp"`
+    /// stopped being an example of one on 2026-11-08, when FTP bookmarks
+    /// became importable; the sentence this comment is part of -- "Greyed
+    /// and counted, never imported" -- is the one the FTP backend design
+    /// §1 quotes as the user-visible change.)
     case unsupported(String)
     /// The bookmark file could not be parsed at all; carries the file name
     /// and the reason (`ExternalBookmark.unreadable`).
@@ -144,9 +150,23 @@ public enum ImportPreviewPlanner {
     ///
     /// This is the SOURCE's vocabulary, not macSCP's: a Cyberduck `Hostname`
     /// is `host` on an sftp bookmark and `endpoint` on an s3 one, and
-    /// `Username` is the S3 access key without changing the row's label. Seven
-    /// of the nine are spelled by the schema field they compare, so a
+    /// `Username` is the S3 access key without changing the row's label. Eight
+    /// of the ten are spelled by the schema field they compare, so a
     /// renamed field takes its key with it.
+    ///
+    /// (Withdrawn wording, verbatim: "Seven of the nine are spelled by the
+    /// schema field they compare". `initialPath` was added below on
+    /// 2026-11-08, when FTP bookmarks became importable, which makes it
+    /// eight of ten. Both figures counted in that same moment, from the
+    /// repository root:
+    ///
+    ///     /usr/bin/grep -o 'public static let [a-zA-Z]* = prefix' Sources/macSCPCore/Sessions/ExternalImport/ImportPreviewPlanner.swift | wc -l
+    ///     /usr/bin/grep -o 'public static let [a-zA-Z]* = prefix + [A-Z0-9]*Field' Sources/macSCPCore/Sessions/ExternalImport/ImportPreviewPlanner.swift | wc -l
+    ///
+    /// printing 10 and 8. The second pattern is the schema-spelled half: it
+    /// matches a key composed from a `*Field` case and so excludes exactly
+    /// `name` and `labels`, which are composed from string literals.)
+
     /// Put where a stored endpoint's userinfo was, on a change row that
     /// differs in nothing else. Language-neutral on purpose: the row's
     /// frame is the App's (`import.cyberduck.change`), and a masked
@@ -162,6 +182,11 @@ public enum ImportPreviewPlanner {
         public static let authKind = prefix + SSHField.authKind.rawValue
         public static let endpoint = prefix + S3Field.endpoint.rawValue
         public static let bucket = prefix + S3Field.bucket.rawValue
+        /// The folder an FTP session opens in. Cyberduck keeps it under the
+        /// same `Path` key an S3 bookmark keeps its bucket under, so the two
+        /// rows read off one source field and say different things -- which
+        /// is exactly why each has its own key here.
+        public static let initialPath = prefix + FTPField.initialPath.rawValue
         /// The session name (`Nickname`) and the labels have no schema field
         /// to be read off: both are properties of the saved session, not of
         /// the protocol it speaks.
@@ -178,18 +203,25 @@ public enum ImportPreviewPlanner {
         case refused(PreviewStatus)
     }
 
-    /// The two protocols this planner can translate. A closed two-case enum
-    /// rather than `ConnectionKind`, so every `switch` below is exhaustive
-    /// over what actually arrives — a `.webdav` arm here would be a branch no
-    /// bookmark can reach, doing nothing, forever.
+    /// The protocols this planner can translate. A closed enum rather than
+    /// `ConnectionKind`, so every `switch` below is exhaustive over what
+    /// actually arrives — a `.webdav` arm here would be a branch no bookmark
+    /// can reach, doing nothing, forever.
+    ///
+    /// (Withdrawn wording, verbatim: "The two protocols this planner can
+    /// translate. A closed two-case enum". There are three since 2026-11-08,
+    /// when FTP bookmarks became importable; `.webdav` is still the example
+    /// of a kind no bookmark source here reads.)
     private enum BookmarkKind {
         case ssh
         case s3
+        case ftp
 
         var connectionKind: ConnectionKind {
             switch self {
             case .ssh: return .ssh
             case .s3: return .s3
+            case .ftp: return .ftp
             }
         }
     }
@@ -353,6 +385,14 @@ public enum ImportPreviewPlanner {
             }
             compare(FieldKey.username, old[S3Field.accessKeyID], new[S3Field.accessKeyID])
             compare(FieldKey.bucket, old[S3Field.bucket], new[S3Field.bucket])
+        case .ftp:
+            compare(FieldKey.host, old[FTPField.host], new[FTPField.host])
+            compare(FieldKey.port, old[FTPField.port], new[FTPField.port])
+            compare(FieldKey.username, old[FTPField.username], new[FTPField.username])
+            compare(FieldKey.initialPath, old[FTPField.initialPath], new[FTPField.initialPath])
+            // The security mode is deliberately NOT compared: it is not in
+            // `values(of:kind:)` either, so an import never moves it and a
+            // row naming it would report a change nobody makes.
         }
         // The nickname is a field the source knows, and an update applies it
         // (design §0 item 3), so a bookmark renamed in the source renames the
@@ -580,6 +620,7 @@ public enum ImportPreviewPlanner {
         switch bookmark.protocol {
         case .sftp: return .importable(.ssh)
         case .s3: return .importable(.s3)
+        case .ftp: return .importable(.ftp)
         case .unsupported(let name): return .refused(.unsupported(name))
         }
     }
@@ -619,6 +660,26 @@ public enum ImportPreviewPlanner {
             // `region` and `usePathStyle` are deliberately absent: no
             // bookmark carries either, so an update must keep whatever the
             // user configured, and a new session takes the baseline below.
+        case .ftp:
+            values[FTPField.host] = trimmed(bookmark.host)
+            // `Port` absent → FTP's own schema default, read off the schema
+            // rather than written out again here. It is already a string
+            // there, so there is nothing to convert.
+            values[FTPField.port] =
+                bookmark.port.map(String.init) ?? FTPFieldSchema.defaults[FTPField.port]
+            values[FTPField.username] = trimmed(bookmark.username ?? "")
+            // Cyberduck keeps an FTP bookmark's starting folder under the
+            // same `Path` key an S3 bookmark keeps its bucket under: the key
+            // is the source's, the meaning is the protocol's. Set only when
+            // the source HAS one — see `updateValues(of:kind:over:)` for
+            // what the absence means.
+            if let path = bookmark.path {
+                values[FTPField.initialPath] = trimmed(path)
+            }
+            // `security` is deliberately absent, for the reason `region` is
+            // above: no bookmark format this project reads says whether the
+            // server speaks TLS, so an update keeps the mode the user chose
+            // and a new session takes the baseline below.
         }
         return values
     }
@@ -644,22 +705,46 @@ public enum ImportPreviewPlanner {
     ///
     /// A NEW session has no auth to preserve, so it takes `values(of:kind:)`
     /// unmodified — there the silence really does mean password.
+    ///
+    /// FTP has one field of the same shape and no auth field at all: a
+    /// bookmark with no `Path` says nothing about the starting folder, so an
+    /// update keeps the one on record. The reason it is written back
+    /// EXPLICITLY, rather than left to the merge in `updatedSession` (which
+    /// would keep it anyway, the key being absent), is
+    /// `changes(from:to:kind:switches:)`: it compares against what this
+    /// function returns, and a bag missing the key reads as `""` there — so
+    /// the row would promise to clear a folder the import then leaves alone.
     private static func updateValues(
         of bookmark: ExternalBookmark, kind: BookmarkKind, over old: FieldValues
     ) -> FieldValues {
         var values = values(of: bookmark, kind: kind)
-        guard case .ssh = kind, trimmed(bookmark.keyPath ?? "").isEmpty else { return values }
-        values[SSHField.authKind] = old[SSHField.authKind]
-        values[SSHField.keyPath] = old[SSHField.keyPath]
+        switch kind {
+        case .ssh:
+            guard trimmed(bookmark.keyPath ?? "").isEmpty else { return values }
+            values[SSHField.authKind] = old[SSHField.authKind]
+            values[SSHField.keyPath] = old[SSHField.keyPath]
+        case .ftp:
+            guard bookmark.path == nil else { return values }
+            values[FTPField.initialPath] = old[FTPField.initialPath]
+        case .s3:
+            // Every field S3 reads off a bookmark is one the bookmark always
+            // carries; the two it does not (`region`, `usePathStyle`) are
+            // absent from `values(of:kind:)` already.
+            break
+        }
         return values
     }
 
     /// What a session of this kind needs beyond §3's table to be dialable at
-    /// all. SSH needs nothing — its five fields are exactly the table.
+    /// all. SSH needs nothing — its five fields are exactly the table. FTP
+    /// needs its security mode, which no bookmark states: the schema's own
+    /// default is what a brand-new FTP form starts with, so an imported
+    /// bookmark is byte for byte what filling that form in produces.
     private static func baseline(for kind: BookmarkKind) -> FieldValues {
         switch kind {
         case .ssh: return FieldValues()
         case .s3: return S3FieldSchema.defaults
+        case .ftp: return FTPFieldSchema.defaults
         }
     }
 

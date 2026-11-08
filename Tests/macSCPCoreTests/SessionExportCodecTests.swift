@@ -307,6 +307,130 @@ struct SessionExportCodecTests {
         #expect(session.fields.keys.allSatisfy { $0.hasPrefix("SSHField.") })
     }
 
+    // MARK: - FTP (the fourth kind, 2026-11-08)
+
+    /// An FTP session survives the envelope with its five fields and its
+    /// Keychain password intact.
+    ///
+    /// Every expectation is a `Bool` computed before the macro, and nothing
+    /// below names a host, a user name or a password in a macro operand or
+    /// receiver. `#expect` reports both the SOURCE TEXT of its operands and
+    /// what they evaluated to, so `#expect(decoded == payload)` on a payload
+    /// carrying a secret prints the secret on the red run — and a red run is
+    /// exactly when somebody is reading the output. The sibling suites above
+    /// predate that rule; new work does not get to.
+    @Test func anFTPSessionRoundTripsThroughTheExportEnvelope() throws {
+        let fields = ftpExportFields(initialPath: "/htdocs")
+        let payload = SessionExportPayload(
+            includesSecrets: true,
+            groups: [],
+            sessions: [ExportedSession(
+                id: UUID(), name: "Uploads", kind: .ftp, fields: fields,
+                password: Self.ftpSecret)])
+
+        let data = try SessionExportCodec.encode(payload, password: Self.envelopePassword)
+        let decoded = try SessionExportCodec.decode(data, password: Self.envelopePassword)
+
+        let roundTripped = decoded == payload
+        #expect(roundTripped)
+        let entry: ExportedSession? = decoded.sessions.count == 1 ? decoded.sessions[0] : nil
+        #expect(entry?.name == "Uploads")
+        #expect(entry?.kind == .ftp)
+        // The whole bag at once, so no key can go missing without this
+        // failing — and compared as a `Bool`, so a mismatch prints neither
+        // side.
+        let bagSurvived = entry?.fields == fields
+        #expect(bagSurvived)
+        // FTP has no secret column of its own either: the password rides the
+        // shared slot, as WebDAV's does.
+        let secretSurvived = entry?.password == Self.ftpSecret
+        #expect(secretSurvived)
+        // Nothing invented a second backend's key alongside FTP's.
+        let onlyFTPKeys = entry?.fields.keys.allSatisfy { $0.hasPrefix("\(FTPField.namespace).") }
+        #expect(onlyFTPKeys == true)
+    }
+
+    /// The password the envelope is locked with, and the Keychain secret the
+    /// FTP entry carries. Named constants rather than literals at the call
+    /// site: a literal inside a macro operand is reported verbatim when the
+    /// expectation fails.
+    private static let envelopePassword = "envelope-pw"
+    private static let ftpSecret = "ftp-secret"
+
+    // MARK: - An unknown kind refuses its entry, not the document
+
+    /// A file naming a kind this build has no case for. Before this task
+    /// `ConnectionKind`'s synthesized `Decodable` threw on it, and because
+    /// the enclosing array threw with it, ONE such entry voided the whole
+    /// document — so an older macSCP reading an export that contains an FTP
+    /// session imported nothing at all.
+    ///
+    /// Both halves in one test, per this project's rule that a negative
+    /// check needs a positive one beside it: `"smb"` is skipped and named,
+    /// and the byte-for-byte same file with `"ftp"` in its place keeps both
+    /// entries and skips none. Without the second half, a decoder that
+    /// dropped EVERY session would satisfy the first.
+    @Test func anExportCarryingAnUnknownKindSkipsThatEntryAndKeepsTheRest() throws {
+        let unknown = try SessionExportCodec.decode(Self.twoSessionFile(secondKind: "smb"))
+        #expect(unknown.sessions.map(\.name) == ["keep"])
+        #expect(unknown.skippedKinds == ["smb"])
+        // The rest of the document is intact, not merely present.
+        #expect(unknown.includesSecrets == false)
+        #expect(unknown.groups.map(\.name) == ["Prod"])
+        let keptFields = unknown.sessions.first?.fields["SSHField.host"] != nil
+        #expect(keptFields)
+
+        // The positive control: the same file, one kind name different.
+        let known = try SessionExportCodec.decode(Self.twoSessionFile(secondKind: "ftp"))
+        #expect(known.sessions.map(\.name) == ["keep", "future"])
+        #expect(known.skippedKinds.isEmpty)
+        #expect(known.sessions.last?.kind == .ftp)
+    }
+
+    /// A payload whose ONLY session names an unknown kind decodes to an
+    /// empty session list rather than to a thrown error — the "never a
+    /// failed document" half, where there is no surviving entry to carry it.
+    @Test func afileWhoseOnlySessionIsAnUnknownKindDecodesEmptyRatherThanThrowing() throws {
+        let raw = Data("""
+        {"format":"macscp-sessions","version":2,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[],"sessions":[{"id":"\(UUID().uuidString)","name":"future","kind":"smb",\
+        "fields":{"SMBField.share":"public"}}]}}
+        """.utf8)
+        let payload = try SessionExportCodec.decode(raw, password: nil)
+        #expect(payload.sessions.isEmpty)
+        #expect(payload.skippedKinds == ["smb"])
+    }
+
+    /// `skippedKinds` is a fact about the FILE that was read, so it must not
+    /// be writable into one: a crafted export naming kinds it does not carry
+    /// would otherwise report skips that never happened.
+    @Test func skippedKindsIsNeverWrittenToAFile() throws {
+        let decoded = try SessionExportCodec.decode(Self.twoSessionFile(secondKind: "smb"))
+        #expect(decoded.skippedKinds == ["smb"])  // the anchor: there IS one to lose
+
+        let data = try SessionExportCodec.encode(decoded, password: nil)
+        let json = String(decoding: data, as: UTF8.self)
+        #expect(json.contains("skippedKinds") == false)
+        #expect(json.contains("smb") == false)
+        #expect(try SessionExportCodec.decode(data).skippedKinds.isEmpty)
+    }
+
+    /// Two sessions and one group, with the second session's `kind` as
+    /// given. Built as bytes rather than by encoding a payload, because a
+    /// kind this build has no case for cannot be ENCODED from here — which
+    /// is the whole situation under test.
+    private static func twoSessionFile(secondKind: String) -> Data {
+        Data("""
+        {"format":"macscp-sessions","version":2,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[{"id":"\(UUID().uuidString)","name":"Prod"}],\
+        "sessions":[{"id":"\(UUID().uuidString)","name":"keep","kind":"ssh",\
+        "fields":{"SSHField.host":"h","SSHField.port":"22","SSHField.username":"u"}},\
+        {"id":"\(UUID().uuidString)","name":"future","kind":"\(secondKind)",\
+        "fields":{"FTPField.host":"h","FTPField.port":"21","FTPField.username":"u",\
+        "FTPField.security":"explicitTLS","FTPField.initialPath":""}}]}}
+        """.utf8)
+    }
+
     // MARK: - The field bag (M23/P3)
 
     /// The one test that proves an export file somebody already has still

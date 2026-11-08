@@ -6,11 +6,103 @@ public struct SessionExportPayload: Codable, Equatable, Sendable {
     public var includesSecrets: Bool
     public var groups: [ExportedGroup]
     public var sessions: [ExportedSession]
+    /// The raw `kind` names of the entries this build could not read, in
+    /// file order — one per session the file carried and `sessions` above
+    /// therefore does not. Empty for every file this build understands
+    /// whole, which is every file written by any build up to and including
+    /// this one.
+    ///
+    /// IN-FILE-ONLY, in the opposite direction to `ExportedSession.replaces`:
+    /// it names no `CodingKeys` case, so `encode(to:)` cannot write it and
+    /// `init(from:)` is the only thing that can set it. What it describes is
+    /// the FILE that was read, not the payload's content, and a file able to
+    /// state it could claim skips that never happened.
+    public private(set) var skippedKinds: [String] = []
 
     public init(includesSecrets: Bool, groups: [ExportedGroup], sessions: [ExportedSession]) {
         self.includesSecrets = includesSecrets
         self.groups = groups
         self.sessions = sessions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case includesSecrets, groups, sessions
+    }
+
+    /// Explicit for one reason: `sessions` is decoded through
+    /// `KindTolerantEntry`, so an entry naming a kind this build has no case
+    /// for is skipped instead of throwing the whole document away. Every
+    /// other key is read exactly as the synthesized decoder read it —
+    /// `decode`, not `decodeIfPresent`, so a body missing `groups` or
+    /// `sessions` is still refused as it was before.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        includesSecrets = try container.decode(Bool.self, forKey: .includesSecrets)
+        groups = try container.decode([ExportedGroup].self, forKey: .groups)
+        (sessions, skippedKinds) = KindTolerantEntry.split(
+            try container.decode([KindTolerantEntry<ExportedSession>].self, forKey: .sessions))
+    }
+}
+
+/// One element of an export file's array of connection-bearing entries:
+/// either a value this build can read, or the raw `kind` name it could not.
+///
+/// **Why it exists.** `ConnectionKind` is a closed `String`-raw `Codable`,
+/// and the FTP backend design (§11a, §13) measured that nothing in `Sources`
+/// called `ConnectionKind(rawValue:` at all — so a file naming a kind this
+/// build has no case for threw out of the enum's synthesized `init(from:)`,
+/// and because an array decode fails with its element, ONE such entry voided
+/// the WHOLE document: an older macSCP opening an export that contains an
+/// FTP session imported nothing and reported `notAnExportFile`. FTP is the
+/// first kind added since export existed, so nothing here had had to survive
+/// it before.
+///
+/// **Why it is here and not on the enum.** `ConnectionKind` stays closed, so
+/// every exhaustive `switch` over it stays exhaustive and the JSON session
+/// store stays strict — a sessions file naming an unreadable kind is still a
+/// refusal, because a store is this machine's own record rather than a
+/// document that travelled. The tolerance belongs to the envelope layer
+/// alone, which is `SessionExportCodec` and `LoginSetExportCodec`; this type
+/// lives in the senior of the two and the other uses it.
+///
+/// The unknown entry is never CONSTRUCTED: only `kind` is read before the
+/// decision, so no caller is ever handed an `ExportedSession` or an
+/// `ExportedLoginSet` holding a placeholder kind that it has to remember not
+/// to trust.
+enum KindTolerantEntry<Entry: Decodable>: Decodable {
+    case readable(Entry)
+    case unknownKind(String)
+
+    private enum KindOnly: String, CodingKey { case kind }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.container(keyedBy: KindOnly.self),
+            let raw = try? container.decodeIfPresent(String.self, forKey: .kind),
+            ConnectionKind(rawValue: raw) == nil {
+            self = .unknownKind(raw)
+            return
+        }
+        // Three shapes reach here, and all three must behave exactly as they
+        // did before this type existed: a readable kind, no `kind` key at all
+        // (a payload written before M12, which the import side maps to
+        // `.ssh`), and a `kind` that is not a string — which the lenient
+        // reads above turn into nil rather than into a skip, so the entry's
+        // own decoder refuses it as it always did.
+        self = .readable(try Entry(from: decoder))
+    }
+
+    /// The entries this build can read and the raw kind names it skipped,
+    /// both in file order.
+    static func split(_ entries: [Self]) -> (readable: [Entry], skipped: [String]) {
+        var readable: [Entry] = []
+        var skipped: [String] = []
+        for entry in entries {
+            switch entry {
+            case .readable(let value): readable.append(value)
+            case .unknownKind(let raw): skipped.append(raw)
+            }
+        }
+        return (readable, skipped)
     }
 }
 

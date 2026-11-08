@@ -1648,6 +1648,7 @@
 "import.field.authKind" = "Sposób logowania";
 "import.field.endpoint" = "Punkt końcowy";
 "import.field.bucket" = "Kubełek";
+"import.field.initialPath" = "Folder początkowy";
 "import.field.name" = "Nazwa";
 "import.field.labels" = "Etykiety";
 "import.result.updated %lld" = "Zaktualizowane istniejące sesje: %lld";

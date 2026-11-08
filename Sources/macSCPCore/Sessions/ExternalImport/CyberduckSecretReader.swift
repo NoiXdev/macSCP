@@ -128,6 +128,7 @@ public struct CyberduckSecretReader: Sendable {
         switch protocolValue {
         case .sftp: return kSecAttrProtocolSSH as String
         case .s3: return kSecAttrProtocolHTTPS as String
+        case .ftp: return kSecAttrProtocolFTP as String
         case .unsupported: return nil
         }
     }

@@ -2,11 +2,24 @@ import Foundation
 
 /// The protocol a `BookmarkSource` read from a third-party bookmark file,
 /// translated to macSCP's own session kinds. `.unsupported` carries the
-/// source's own protocol name (e.g. `"ftp"`, `"davs"`) so a preview can show
+/// source's own protocol name (e.g. `"smb"`, `"davs"`) so a preview can show
 /// and count it without macSCP knowing what it means.
+///
+/// (Withdrawn wording, verbatim: "`.unsupported` carries the source's own
+/// protocol name (e.g. `"ftp"`, `"davs"`)". `"ftp"` stopped being an example
+/// of an unsupported protocol on 2026-11-08, when it became `.ftp` below.)
+///
+/// A case per protocol macSCP speaks, NOT a `ConnectionKind`: the two are
+/// not the same vocabulary. `sftp` is a source's word for what macSCP calls
+/// `.ssh`, and a source may distinguish protocols macSCP maps onto one kind.
 public enum ExternalProtocol: Sendable, Equatable {
     case sftp
     case s3
+    /// Plain FTP, as a source spells it. The security mode is deliberately
+    /// NOT carried: no bookmark format this project reads says whether the
+    /// server speaks TLS, so the imported session takes FTP's own schema
+    /// default rather than a mode inferred from silence.
+    case ftp
     case unsupported(String)
 }
 

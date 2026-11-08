@@ -61,6 +61,12 @@ public struct CyberduckBookmarkSource: BookmarkSource {
         switch protocolName {
         case "sftp": translated = .sftp
         case "s3": translated = .s3
+        // Cyberduck's own identifier for plain FTP. Its FTPS bookmarks are
+        // spelled `"ftps"` and are NOT read here: this reader translates
+        // only what it has a measured fixture for, and `ftps` would also
+        // have to decide between explicit and implicit TLS, which the
+        // identifier alone does not say.
+        case "ftp": translated = .ftp
         default: translated = .unsupported(protocolName ?? "")
         }
 

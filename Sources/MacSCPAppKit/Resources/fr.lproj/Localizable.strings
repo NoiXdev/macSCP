@@ -1650,6 +1650,7 @@
 "import.field.authKind" = "Méthode de connexion";
 "import.field.endpoint" = "Point de terminaison";
 "import.field.bucket" = "Bucket";
+"import.field.initialPath" = "Dossier initial";
 "import.field.name" = "Nom";
 "import.field.labels" = "Étiquettes";
 "import.result.updated %lld" = "Sessions existantes mises à jour : %lld";

@@ -100,8 +100,13 @@ struct ImportFromSourceViewModelTests {
         return model
     }
 
-    /// Five bookmarks: two ordinary sftp ones, one whose port moved, an FTP
+    /// Five bookmarks: two ordinary sftp ones, one whose port moved, an SMB
     /// one (a protocol with no backend) and a file that would not parse.
+    ///
+    /// The fourth used to be an FTP bookmark. FTP is a kind this project
+    /// speaks since 2026-11-08, so the example of a protocol with no backend
+    /// is `"smb"` — `ConnectionKind`'s own comment already named it as a
+    /// future protocol.
     private func fiveBookmarks() -> [ExternalBookmark] {
         [
             bookmark(id: "new", nickname: "Fresh", host: "fresh.example.net", port: 22,
@@ -110,8 +115,8 @@ struct ImportFromSourceViewModelTests {
                      username: "deploy", labels: ["prod"]),
             bookmark(id: "moved", nickname: "Moved", host: "moved.example.net", port: 2222,
                      username: "deploy"),
-            bookmark(id: "ftp", protocol: .unsupported("ftp"), nickname: "Files",
-                     host: "files.example.net", port: 21, username: "anon"),
+            bookmark(id: "smb", protocol: .unsupported("smb"), nickname: "Files",
+                     host: "files.example.net", port: 445, username: "anon"),
             bookmark(id: "broken.duck", nickname: nil, fileName: "broken.duck",
                      unreadable: "broken.duck: not a property list"),
         ]
@@ -141,11 +146,11 @@ struct ImportFromSourceViewModelTests {
         let store = matchingStore()
         let model = await loadedModel(sessions: store.sessions)
 
-        #expect(model.rows.map(\.id) == ["new", "same", "moved", "ftp", "broken.duck"])
+        #expect(model.rows.map(\.id) == ["new", "same", "moved", "smb", "broken.duck"])
         #expect(model.rows[0].status == .new)
         #expect(model.rows[1].status == .knownUnchanged(store.same))
         #expect(model.rows[2].status.storedSessionID == store.moved)
-        #expect(model.rows[3].status == .unsupported("ftp"))
+        #expect(model.rows[3].status == .unsupported("smb"))
         #expect(model.loadError == nil)
     }
 
@@ -255,7 +260,7 @@ struct ImportFromSourceViewModelTests {
         // that turned a ticked row off would prove nothing about a toggle
         // reaching a row at all.
         let model = await loadedModel(sessions: matchingStore().sessions)
-        let unsupported = try #require(model.rows.first { $0.id == "ftp" })
+        let unsupported = try #require(model.rows.first { $0.id == "smb" })
         let unreadable = try #require(model.rows.first { $0.id == "broken.duck" })
         let selectable = try #require(model.rows.first { $0.id == "same" })
 
@@ -263,7 +268,7 @@ struct ImportFromSourceViewModelTests {
         model.toggle(row: unreadable)
         model.toggle(row: selectable)
 
-        #expect(model.rows.first { $0.id == "ftp" }?.selected == false)
+        #expect(model.rows.first { $0.id == "smb" }?.selected == false)
         #expect(model.rows.first { $0.id == "broken.duck" }?.selected == false)
         #expect(model.rows.first { $0.id == "same" }?.selected == true)
     }
@@ -536,7 +541,7 @@ struct ImportFromSourceViewModelTests {
             ImportPreviewPresentation.statusText(
                 for: .knownChanged(stored, [FieldChange(
                     field: ImportPreviewPlanner.FieldKey.port, old: "22", new: "2222")])),
-            ImportPreviewPresentation.statusText(for: .unsupported("ftp")),
+            ImportPreviewPresentation.statusText(for: .unsupported("smb")),
             ImportPreviewPresentation.statusText(for: .unreadable("broken.duck: no")),
         ]
 
@@ -567,7 +572,7 @@ struct ImportFromSourceViewModelTests {
         #expect(ImportPreviewPresentation.isChange(.knownChanged(UUID(), [])))
         #expect(ImportPreviewPresentation.isChange(.new) == false)
         #expect(ImportPreviewPresentation.isChange(.knownUnchanged(UUID())) == false)
-        #expect(ImportPreviewPresentation.isChange(.unsupported("ftp")) == false)
+        #expect(ImportPreviewPresentation.isChange(.unsupported("smb")) == false)
         #expect(ImportPreviewPresentation.isChange(.unreadable("x")) == false)
     }
 
@@ -607,7 +612,23 @@ struct ImportFromSourceViewModelTests {
         #expect(ImportPreviewPresentation.badge(for: bookmark(id: "b", protocol: .s3))
                 == L10n.string(s3.badgeLabelKey, s3.badgeLabelDefault))
 
+        let ftp = BackendDescriptor.descriptor(for: .ftp)
+        #expect(ImportPreviewPresentation.badge(for: bookmark(id: "c", protocol: .ftp))
+                == L10n.string(ftp.badgeLabelKey, ftp.badgeLabelDefault))
+
         #expect(ImportPreviewPresentation.badge(
-            for: bookmark(id: "c", protocol: .unsupported("davs"))) == "DAVS")
+            for: bookmark(id: "d", protocol: .unsupported("davs"))) == "DAVS")
+    }
+
+    /// An FTP bookmark's target column reads like a shell connection's —
+    /// `user@host:port` — because that is what an FTP connection is
+    /// addressed by. Bound before the macro: the operands carry a host and
+    /// an account name, which `#expect` would report on a red run.
+    @Test func theTargetColumnReadsUserAtHostForAnFTPBookmark() {
+        let text = ImportPreviewPresentation.target(
+            for: bookmark(id: "a", protocol: .ftp, host: "files.example.net", port: 21,
+                          username: "uploader"))
+        let readsLikeAShellTarget = text == "uploader@files.example.net:21"
+        #expect(readsLikeAShellTarget)
     }
 }

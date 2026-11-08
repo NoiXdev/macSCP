@@ -149,11 +149,15 @@ struct CyberduckSecretReaderTests {
         #expect(itemStillExists)
     }
 
+    /// The fixture protocol used to be `.unsupported("ftp")`; FTP is a kind
+    /// this project speaks since 2026-11-08 and the reader now queries for
+    /// it, so the example of a protocol Cyberduck keeps no item macSCP can
+    /// ask for is `"smb"`.
     @Test func unsupportedProtocolIsNotAttempted() async {
         let server = "keychain-test-unsupported.example.net"
-        let account = "ftp-user-\(UUID().uuidString.prefix(8))"
+        let account = "smb-user-\(UUID().uuidString.prefix(8))"
         let read = await CyberduckSecretReader().secret(
-            for: bookmark(host: server, port: 21, username: account, protocolValue: .unsupported("ftp")))
+            for: bookmark(host: server, port: 445, username: account, protocolValue: .unsupported("smb")))
         #expect(Self.isNotAttempted(read))
         #expect(Self.isNotFound(read) == false)
     }

@@ -83,15 +83,22 @@ struct CyberduckBookmarkSourceTests {
         #expect(row.unreadable == nil)
     }
 
-    @Test func ftpBookmarkIsUnsupported() throws {
+    /// `"ftp"` used to read as `.unsupported("ftp")` — this test was named
+    /// `ftpBookmarkIsUnsupported` and asserted exactly that. FTP is a kind
+    /// this project speaks since 2026-11-08, so the reader translates it
+    /// like any other; `davsBookmarkIsUnsupported` below is the anchor that
+    /// `.unsupported` is still reachable at all.
+    @Test func ftpBookmarkIsTranslatedToTheFTPKind() throws {
         let source = CyberduckBookmarkSource()
         let bookmarks = try source.read(from: fixturesFolder)
         let row = try bookmark(bookmarks, fileName: "ftp.duck")
 
         #expect(row.id == "55555555-5555-5555-5555-555555555555")
         #expect(row.nickname == "Old FTP")
-        #expect(row.protocol == .unsupported("ftp"))
+        #expect(row.protocol == .ftp)
         #expect(row.host == "ftp.example.net")
+        #expect(row.port == 21)
+        #expect(row.username == "ftpuser")
         #expect(row.unreadable == nil)
     }
 

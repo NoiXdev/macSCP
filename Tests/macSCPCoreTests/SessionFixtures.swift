@@ -152,3 +152,23 @@ func webdavExportFields(
     values[bool: WebDAVField.useNextcloudPath] = useNextcloudPath
     return values.raw
 }
+
+/// FTP form values as `BackendDescriptor.sessionValues` writes them for an
+/// `.ftp` session — the five keys `FTPFieldSchema.values(from:)` produces,
+/// and no password: that lives in the Keychain and never in an export's
+/// field bag.
+func ftpExportFields(
+    host: String = "files.example.com",
+    port: Int = 21,
+    username: String = "tim",
+    security: FTPSecurityMode = .explicitTLS,
+    initialPath: String? = nil
+) -> [String: String] {
+    var values = FieldValues()
+    values[FTPField.host] = host
+    values[FTPField.port] = String(port)
+    values[FTPField.security] = security.rawValue
+    values[FTPField.initialPath] = initialPath ?? ""
+    values[FTPField.username] = username
+    return values.raw
+}

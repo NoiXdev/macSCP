@@ -7,11 +7,38 @@ public struct LoginSetExportPayload: Codable, Equatable, Sendable {
     public var includesSecrets: Bool
     public var includesKeyFiles: Bool
     public var sets: [ExportedLoginSet]
+    /// The raw `kind` names of the sets this build could not read, in file
+    /// order -- one per set the file carried and `sets` above therefore does
+    /// not. The twin of `SessionExportPayload.skippedKinds`, with the same
+    /// in-file-only rule: no `CodingKeys` case, so `encode(to:)` cannot
+    /// write it.
+    ///
+    /// `ExportedLoginSet.kind` is NON-optional, which made this the sharper
+    /// of the two cases: before `KindTolerantEntry` one set naming an
+    /// unreadable kind threw out of the whole `sets` array, so a login-set
+    /// file written by a newer macSCP imported nothing at all.
+    public private(set) var skippedKinds: [String] = []
 
     public init(includesSecrets: Bool, includesKeyFiles: Bool, sets: [ExportedLoginSet]) {
         self.includesSecrets = includesSecrets
         self.includesKeyFiles = includesKeyFiles
         self.sets = sets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case includesSecrets, includesKeyFiles, sets
+    }
+
+    /// Explicit only so `sets` can be decoded through `KindTolerantEntry`
+    /// (declared beside `SessionExportPayload`, the senior of the two
+    /// envelope payloads). Every other key is read exactly as the
+    /// synthesized decoder read it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        includesSecrets = try container.decode(Bool.self, forKey: .includesSecrets)
+        includesKeyFiles = try container.decode(Bool.self, forKey: .includesKeyFiles)
+        (sets, skippedKinds) = KindTolerantEntry.split(
+            try container.decode([KindTolerantEntry<ExportedLoginSet>].self, forKey: .sets))
     }
 }
 
