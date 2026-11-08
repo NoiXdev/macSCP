@@ -1574,7 +1574,7 @@ struct ReconnectWiringGuardTests {
             let viaImplicitSelf = await connect()
             let unqualifiedReference = connect
             async let dialed = tab.connectionViewModel.connect()
-            let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30)
+            let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30, transferSlots: 3)
             """)
 
         #expect(!flagged.contains { $0.contains("harmless") }, """
@@ -1624,7 +1624,7 @@ struct ReconnectWiringGuardTests {
             """)
         #expect(
             flagged.contains(
-                "let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30)"),
+                "let viaTheEntryPoint = try await BackendDescriptor.openConnection(c, hostKey: d, certificate: d, timeoutSeconds: 30, transferSlots: 3)"),
             """
             the name Core's dial actually goes by now. `openConnection` contains no lowercase \
             `connect`, so the pattern that had been catching every dial in this project \

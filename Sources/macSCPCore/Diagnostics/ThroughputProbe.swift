@@ -103,9 +103,17 @@ struct DiagnosticThroughputOpener: Sendable {
     var open:
         @Sendable (ConnectionConfig, _ timeoutSeconds: Int) async throws -> any RemoteFileSystem
 
+    /// The slot count is the shipped default and not the user's setting, and
+    /// for this step that is a statement about the measurement rather than a
+    /// gap in it: the walk runs ONE transfer at a time — upload, then
+    /// download, then removal, in that order on every run — so one transfer
+    /// slot is ever occupied and a pool of three measures what a pool of
+    /// eight would. What the rate does not report is CONCURRENT transfers,
+    /// which this step has never measured for any backend.
     static let live = DiagnosticThroughputOpener { config, seconds in
         try await BackendDescriptor.openConnection(
-            config, hostKey: .refusing, certificate: .refusing, timeoutSeconds: seconds)
+            config, hostKey: .refusing, certificate: .refusing, timeoutSeconds: seconds,
+            transferSlots: SettingsStore.defaultMaxConcurrentTransfers)
     }
 }
 

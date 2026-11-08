@@ -714,9 +714,13 @@ struct CLIMatrix: Sendable {
             // then. Unlike SSH there is no known-hosts store to keep out of
             // the developer's real directory: a TLS certificate is decided by
             // the decider handed in, not remembered in a file.
+            // The slot count is the default the binary under test passes
+            // (`SessionConnecting.swift`), so this side seeds and verifies
+            // over a pool the same size as the one the run used.
             return try await BackendDescriptor.openConnection(
                 .ftp(ftp), hostKey: .refusing, certificate: .asking { _ in true },
-                timeoutSeconds: 30)
+                timeoutSeconds: 30,
+                transferSlots: SettingsStore.defaultMaxConcurrentTransfers)
         }
     }
 

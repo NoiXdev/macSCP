@@ -78,9 +78,13 @@ extension DiagnosticContribution {
             return timer.finish(.failed(DialSupport.reason(for: error)), "")
         }
         do {
+            // The slot count is the shipped default, not the user's setting:
+            // this dial measures whether the login works and transfers
+            // nothing, and the SSH backend ignores the number anyway.
             let fileSystem = try await BackendDescriptor.openConnection(
                 config, hostKey: .refusing, certificate: .refusing,
-                timeoutSeconds: DialSupport.connectSeconds(context.timeout))
+                timeoutSeconds: DialSupport.connectSeconds(context.timeout),
+                transferSlots: SettingsStore.defaultMaxConcurrentTransfers)
             await fileSystem.disconnect()
             return timer.finish(.ok, "transport, host key, authentication and the SFTP channel")
         } catch {

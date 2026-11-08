@@ -187,20 +187,35 @@ public final class SettingsStore {
     /// The SHIPPED default for `maxConcurrentTransfers`, readable without a
     /// store instance.
     ///
-    /// It exists for one caller: `BackendDescriptor.ftpDescriptor`'s connect
-    /// closure, which sizes the FTP transfer pool (spec §5b) and cannot reach
-    /// a `SettingsStore` — the store is `@MainActor` and the closure is
-    /// handed only a config, two deciders and a timeout. It reads the SAME
+    /// It exists for the callers that pass `transferSlots:` to
+    /// `BackendDescriptor.openConnection` and cannot reach a `SettingsStore`
+    /// — the store is `@MainActor`, and these are either a binary that reads
+    /// no settings file or a `@Sendable` probe closure. Each reads the SAME
     /// constant the accessor below reads, so the number has one spelling; a
-    /// literal `3` at that call site would be a second copy of it.
+    /// literal `3` at any of those call sites would be a second copy of it.
     ///
-    /// What this does NOT do is make the setting take effect for FTP: the
-    /// user's own value reaches that closure only once `openConnection` is
-    /// given it, which is a signature change across all four backends and
-    /// their call sites in the app and the command line. Until then an FTP
-    /// tab holds the default's worth of transfer connections whatever the
-    /// Transfers tab says, which is the `docs/BACKLOG.md` row this constant's
-    /// one caller names.
+    /// Withdrawn wording, verbatim, because the signature change it was
+    /// waiting on has happened: "It exists for one caller:
+    /// `BackendDescriptor.ftpDescriptor`'s connect closure […] What this does
+    /// NOT do is make the setting take effect for FTP: the user's own value
+    /// reaches that closure only once `openConnection` is given it, which is
+    /// a signature change across all four backends and their call sites in
+    /// the app and the command line. Until then an FTP tab holds the
+    /// default's worth of transfer connections whatever the Transfers tab
+    /// says". `openConnection` carries the number now (spec §5b), the app
+    /// reads `maxConcurrentTransfers` per connect attempt, and the FTP
+    /// descriptor's closure passes on what it was given rather than this
+    /// constant.
+    ///
+    /// Who still names it, counted with
+    /// `/usr/bin/grep -rno 'defaultMaxConcurrentTransfers' Sources | /usr/bin/grep -v Settings/SettingsStore.swift`
+    /// — 3 lines, exit 0: the command line
+    /// (`MacSCPCLI/SessionConnecting.swift`, which reads no settings file at
+    /// all) and the two diagnostic probes that open a connection
+    /// (`DialProbes`, `ThroughputProbe`), whose pool size is not a quantity
+    /// the user is choosing. Each says so where it passes it.
+    /// `FTPProbe` is NOT in that list and needs nothing: it opens one
+    /// `FTPControlConnection` and builds no pool.
     public static let defaultMaxConcurrentTransfers = Defaults.maxConcurrentTransfers
 
     /// Maximum concurrent transfers (clamped to 1...8, default 3).

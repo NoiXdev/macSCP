@@ -709,6 +709,75 @@ struct FTPConnectionPoolTests {
         #expect(aboveTheCeiling == 8)
     }
 
+    /// The pool the FTP BACKEND builds has as many transfer slots as the
+    /// number it was connected with — which is the half
+    /// `theSlotCountFollowsMaxConcurrentTransfersAndItsClamp` above cannot
+    /// reach, because that case builds the pool itself. This one goes in
+    /// through `BackendDescriptor.openConnection`, the one public way to
+    /// open a connection, so what is measured is the path a tab takes.
+    ///
+    /// **It is the requirement and not the wiring.** A case asserting that
+    /// `transferSlots:` was forwarded would pass against a closure that
+    /// forwarded it into something that then ignored it; this reads the
+    /// POOL the backend ended up with.
+    ///
+    /// Red before `openConnection` carried the number, on this exact path
+    /// and at this exact value: `↳ built → 3` against `== 8`, whatever the
+    /// caller asked for (§5b's defect, `docs/BACKLOG.md`).
+    ///
+    /// **1 and 8 are the two ends where the defect was visible**, and 3 —
+    /// the shipped default — is where it hid: there the correct and the
+    /// broken code agree. 0 and 99 are the clamp, which belongs to
+    /// `FTPConnectionPool` and is checked here only to show that nothing on
+    /// this path re-clamps, defaults or rounds the number on its way down.
+    ///
+    /// No credential, host or port is an operand: the server generates its
+    /// own login, the config is built inside the helper, and every
+    /// expectation below compares `Int`s that were computed first.
+    @Test func theBackendsOwnConnectPathSizesThePoolFromTheNumberItIsGiven() async throws {
+        let asked = [1, 8, 0, 99]
+        let built = try await Self.slotsThroughTheBackend(asking: asked)
+        #expect(built == [1, 8, 1, 8], """
+            the FTP backend's connect path built pools of \(built) transfer slots for \
+            \(asked) asked for — at 1 and 8 that is spec §5b's number not arriving, and at \
+            0 and 99 it is the pool's 1...8 clamp not holding.
+            """)
+    }
+
+    /// Connects through `BackendDescriptor.openConnection` once per entry of
+    /// `asking` and returns the slot count each resulting pool was built
+    /// with, in the same order.
+    ///
+    /// One server for all of them: each connect gets its own
+    /// `FTPFileSystem` and its own pool, and the slot count is read off the
+    /// pool rather than off the wire, so the connects cannot influence one
+    /// another's answer. `FTPPoolBudget` cannot either — it keys a REFUSAL
+    /// count on host plus account and nothing here is refused, and
+    /// `configuredSlots` is the count before the budget in any case.
+    ///
+    /// A missing entry (a file system that is not an `FTPFileSystem`) is
+    /// recorded as `-1` rather than skipped: a count that silently shortened
+    /// would turn a wrong backend into a passing run.
+    private static func slotsThroughTheBackend(asking: [Int]) async throws -> [Int] {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        return try await running(server) { host, port in
+            let credentials = server.credentials
+            var built: [Int] = []
+            for slots in asking {
+                let fileSystem = try await BackendDescriptor.openConnection(
+                    .ftp(FTPConnectionConfig(
+                        host: host, port: port, username: credentials.username,
+                        security: .plain, password: credentials.password)),
+                    hostKey: .refusing, certificate: .refusing, timeoutSeconds: 30,
+                    transferSlots: slots)
+                built.append((fileSystem as? FTPFileSystem)?.pool.configuredSlots ?? -1)
+                await fileSystem.disconnect()
+            }
+            return built
+        }
+    }
+
     /// A pool's configured slot count, built against nothing: the number is
     /// decided at construction and needs no server to read.
     private static func slots(configured: Int) -> Int {

@@ -105,7 +105,7 @@ struct BackendDescriptorHostKeyWiringGuardTests {
     @Test func scannerAcceptsAClosureThatForwardsAWiredDecider() throws {
         let source = """
             ProtocolCapabilities(supportsShell: true, authenticatesHostKey: true)
-            connect: { config, decider, _, timeout in
+            connect: { config, decider, _, timeout, _ in
                 return try await Something.connect(decider: decider)
             }
             """
@@ -119,7 +119,7 @@ struct BackendDescriptorHostKeyWiringGuardTests {
     @Test func scannerFlagsAClosureThatClaimsTrueButDiscardsTheDecider() throws {
         let source = """
             ProtocolCapabilities(supportsShell: true, authenticatesHostKey: true)
-            connect: { config, _, _, timeout in
+            connect: { config, _, _, timeout, _ in
                 return try await Something.connect()
             }
             """
@@ -131,7 +131,7 @@ struct BackendDescriptorHostKeyWiringGuardTests {
     @Test func scannerFlagsAClosureThatClaimsFalseButForwardsTheDecider() throws {
         let source = """
             ProtocolCapabilities(supportsShell: true, authenticatesHostKey: false)
-            connect: { config, decider, _, timeout in
+            connect: { config, decider, _, timeout, _ in
                 return try await Something.connect(decider: decider)
             }
             """
@@ -143,7 +143,7 @@ struct BackendDescriptorHostKeyWiringGuardTests {
     @Test func scannerAcceptsAClosureThatClaimsFalseAndDiscardsTheDecider() throws {
         let source = """
             ProtocolCapabilities(supportsShell: true, authenticatesHostKey: false)
-            connect: { config, _, _, timeout in
+            connect: { config, _, _, timeout, _ in
                 return try await Something.connect()
             }
             """

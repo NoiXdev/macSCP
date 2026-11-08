@@ -637,7 +637,7 @@ struct InternetSpeedProbeTests {
             kind: .ssh, capabilities: ssh.capabilities,
             connectionSchema: ssh.connectionSchema, credentialSchema: ssh.credentialSchema,
             makeConfig: ssh.makeConfig, displaySummary: ssh.displaySummary, apply: ssh.apply,
-            connect: { _, _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
+            connect: { _, _, _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B", secretEnvironmentVariable: nil,
             requiresSecret: { _ in false }, fileActions: [],
             connectionActions: [],

@@ -69,9 +69,20 @@ public struct BackendDescriptor: Sendable {
     /// known-hosts store, WebDAV its trusted-certificate store -- and a
     /// mismatch in either is a hard stop the deciders below never get asked
     /// about.
-    /// The last argument is the connection-establishment timeout in seconds
+    /// The fourth argument is the connection-establishment timeout in seconds
     /// (`SettingsStore.connectTimeoutSeconds`). Only the SSH closure below
     /// actually uses it (forwarded to `CitadelFileSystem.connect`).
+    ///
+    /// The fifth is how many SIMULTANEOUS transfers this connection is to be
+    /// able to carry (`SettingsStore.maxConcurrentTransfers`, spec §5b: one
+    /// number, the existing one). Only the FTP closure below uses it, and
+    /// for FTP it is not a tuning knob but the protocol: one control
+    /// connection carries one transfer at a time, so the pool needs as many
+    /// of them as the transfer queue may start at once. The other three
+    /// backends multiplex transfers over the connection they already have —
+    /// SSH over channels of one SSH connection, S3 and WebDAV over their own
+    /// HTTP clients — and nothing about their shape changes with this
+    /// number, so each ignores it and says so at its closure.
     ///
     /// Unlike a host-key decider, which is genuinely SSH-only (S3 and
     /// WebDAV have their own, separate certificate decider), a connect
@@ -86,13 +97,19 @@ public struct BackendDescriptor: Sendable {
     /// later is a one-line change per backend, not a signature change.
     ///
     /// Module-internal, unlike the descriptor's other stored members: see
-    /// `openConnection(_:hostKey:certificate:timeoutSeconds:)` below for why
-    /// the closure itself is out of reach from outside Core.
+    /// `openConnection(_:hostKey:certificate:timeoutSeconds:transferSlots:)`
+    /// below for why the closure itself is out of reach from outside Core.
+    ///
+    /// The two trailing `Int`s are named in the type — a closure type takes
+    /// no argument labels, and two adjacent unlabelled `Int`s at the one
+    /// call site are swappable in silence. `openConnection` below is that
+    /// call site, and it does carry labels.
     let connect: @Sendable (
         ConnectionConfig,
         HostKeyDecider,
         WebDAVSessionDelegate.CertificateDecider,
-        Int
+        _ connectTimeoutSeconds: Int,
+        _ transferSlots: Int
     ) async throws -> any RemoteFileSystem
 
     public let badgeLabelKey: String
@@ -481,7 +498,9 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try SSHFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in SSHFieldSchema.displaySummary(values) },
         apply: { values, session in SSHFieldSchema.apply(values, to: &session) },
-        connect: { config, decider, _, connectTimeoutSeconds in
+        // The transfer-slot count is ignored: SFTP transfers are channels on
+        // the one SSH connection, so their number is the queue's business.
+        connect: { config, decider, _, connectTimeoutSeconds, _ in
             guard case .ssh(let ssh) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the SSH backend")
             }
@@ -516,7 +535,9 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try S3FieldSchema.makeConfig(values, secret) },
         displaySummary: { values in S3FieldSchema.displaySummary(values) },
         apply: { values, session in S3FieldSchema.apply(values, to: &session) },
-        connect: { config, _, _, _ in
+        // The transfer-slot count is ignored: S3 transfers are requests on
+        // one HTTP client, which holds no per-transfer connection to size.
+        connect: { config, _, _, _, _ in
             guard case .s3(let s3) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the S3 backend")
             }
@@ -569,7 +590,9 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try WebDAVFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in WebDAVFieldSchema.displaySummary(values) },
         apply: { values, session in WebDAVFieldSchema.apply(values, to: &session) },
-        connect: { config, _, certificateDecider, _ in
+        // The transfer-slot count is ignored, for S3's reason: a WebDAV
+        // transfer is a request on one HTTP client, not a connection held.
+        connect: { config, _, certificateDecider, _, _ in
             guard case .webdav(let webdav) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the WebDAV backend")
             }
@@ -623,21 +646,28 @@ public struct BackendDescriptor: Sendable {
         // `CertificateDecider` is WebDAV's type aliased rather than a second
         // one (`FTPControlConnection.swift`).
         //
-        // `transferSlots` is the SHIPPED DEFAULT and not the user's setting,
-        // which is a gap rather than a decision: spec §5b sizes the pool from
-        // `SettingsStore.maxConcurrentTransfers`, the store is `@MainActor`,
-        // and this closure is handed a config, two deciders and a timeout —
-        // the setting reaches it only once `openConnection` carries it, which
-        // is a signature change across all four backends. Named at
-        // `SettingsStore.defaultMaxConcurrentTransfers`, which is the one
-        // spelling of the number.
-        connect: { config, _, certificateDecider, connectTimeoutSeconds in
+        // The ONE backend that uses the slot count, because for FTP it is
+        // the protocol and not a preference: one control connection carries
+        // one transfer at a time (spec §5, §5b). It is whatever the caller
+        // was given — the app reads `SettingsStore.maxConcurrentTransfers`
+        // per connect attempt, the command line and the diagnostic probes
+        // pass `SettingsStore.defaultMaxConcurrentTransfers` and each says
+        // why. Withdrawn wording, verbatim: "`transferSlots` is the SHIPPED
+        // DEFAULT and not the user's setting, which is a gap rather than a
+        // decision […] the setting reaches it only once `openConnection`
+        // carries it, which is a signature change across all four
+        // backends." It carries it now; that is this change.
+        //
+        // Not re-clamped here. The setting clamps 1...8 and
+        // `FTPConnectionPool` clamps the number it is built with to the same
+        // range; a third clamp would be a third place to keep in step.
+        connect: { config, _, certificateDecider, connectTimeoutSeconds, transferSlots in
             guard case .ftp(let ftp) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the FTP backend")
             }
             return try await FTPFileSystem.connect(
                 ftp,
-                transferSlots: SettingsStore.defaultMaxConcurrentTransfers,
+                transferSlots: transferSlots,
                 certificateDecider: certificateDecider,
                 timeout: .seconds(Int64(connectTimeoutSeconds)),
                 trustStore: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
@@ -667,13 +697,31 @@ extension BackendDescriptor {
     /// Routing stays where it was — `descriptor(for:)` picks the backend and
     /// the backend's own closure carries its trust store — so a mismatch is
     /// still a hard stop inside the backend and reaches no decider here.
+    ///
+    /// `transferSlots` has NO DEFAULT, for the reason
+    /// `FTPFileSystem.connect`'s own parameter has none: spec §5b sizes the
+    /// FTP transfer pool from `SettingsStore.maxConcurrentTransfers` — one
+    /// number, the existing one — and a default here is a second copy of it
+    /// that a caller gets by typing nothing. A caller that cannot reach the
+    /// store names `SettingsStore.defaultMaxConcurrentTransfers` instead, in
+    /// as many words, which is a sentence a reader can check.
+    ///
+    /// **It is read per connect attempt, and it does not reach a connection
+    /// that is already open.** The number is a construction argument of the
+    /// pool; moving the setting resizes the pool of the NEXT connect, not of
+    /// a connected tab. (The transfer QUEUE's own limit does follow the
+    /// setting live, per tab — `ContentView+Lifecycle.swift`'s
+    /// `onChange(of:)` — so between a change and the next connect an FTP
+    /// tab is the one place the two numbers can differ, in the direction
+    /// §5b's symptom describes.)
     public static func openConnection(
         _ config: ConnectionConfig,
         hostKey: HostKeyDecider,
         certificate: WebDAVSessionDelegate.CertificateDecider,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        transferSlots: Int
     ) async throws -> any RemoteFileSystem {
         try await descriptor(for: config.kind)
-            .connect(config, hostKey, certificate, timeoutSeconds)
+            .connect(config, hostKey, certificate, timeoutSeconds, transferSlots)
     }
 }

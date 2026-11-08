@@ -24,15 +24,28 @@ import Testing
 /// a behavioral test. Fail-closed: an unreadable file, an unrecognized call
 /// shape, or an argument count other than 4 all count as failures.
 ///
-/// The other three arguments are counted, not read, and the count is here
-/// to catch the parser drifting rather than the code changing — the
+/// **It guards a second argument of the same call since spec §5b:
+/// `transferSlots:`, which sizes the FTP transfer pool and must be
+/// `settingsStore.maxConcurrentTransfers` read in the same place, for the
+/// same reason.** It lives here rather than in a file of its own — unlike
+/// the Core-layer twin named above, which guards a differently-shaped call
+/// in a different file — because it is the SAME call site and the same
+/// scanner, and a second copy of this scanner would be a second thing to
+/// keep in step. The file keeps its name: eleven places name it, counted
+/// 2026-11-08 with
+/// `/usr/bin/grep -rno ConnectTimeoutAppWiringGuard --include='*.swift' --include='*.md' Sources Tests docs CLAUDE.md .superpowers`
+/// (exit 0), of which nine are in test files other than this one.
+///
+/// The remaining three arguments are counted, not read, and the count is
+/// here to catch the parser drifting rather than the code changing — the
 /// call's arity is the compiler's business. So a decider argument that has
 /// quietly stopped asking anybody, `certificate: .asking { _ in true }`,
 /// passes this guard unchanged. Measured 2026-08-28: it passes the whole
 /// test run unchanged as well. That is a gap in the project rather than in
-/// this file, which is about the timeout; it is written down here because
-/// this is the call site, and a reader who finds the argument list already
-/// under a guard should not conclude that the whole list is.
+/// this file, which is about the two settings-derived arguments; it is
+/// written down here because this is the call site, and a reader who finds
+/// the argument list already under a guard should not conclude that the
+/// whole list is.
 @Suite("App-layer connect-timeout wiring guard")
 struct ConnectTimeoutAppWiringGuardTests {
     /// `#filePath` here is
@@ -68,18 +81,47 @@ struct ConnectTimeoutAppWiringGuardTests {
                 """)
             return
         }
-        #expect(arguments.count == 4, """
-            expected 4 arguments at the `\(Self.anchor)` call site in \
+        #expect(arguments.count == 5, """
+            expected 5 arguments at the `\(Self.anchor)` call site in \
             ContentView+Lifecycle.swift (config, host-key decider, certificate \
-            decider, connect-timeout seconds), found \(arguments.count): \
-            \(arguments) — re-anchor this guard.
+            decider, connect-timeout seconds, transfer slots), found \
+            \(arguments.count): \(arguments) — re-anchor this guard.
             """)
-        #expect(arguments.last == "timeoutSeconds: connectTimeoutSeconds", """
-            the `\(Self.anchor)` call's last argument is \
-            \(arguments.last.map { "`\($0)`" } ?? "missing"), not \
+        let timeoutArgument = arguments.first { $0.hasPrefix("timeoutSeconds:") }
+        #expect(timeoutArgument == "timeoutSeconds: connectTimeoutSeconds", """
+            the `\(Self.anchor)` call's `timeoutSeconds:` argument is \
+            \(timeoutArgument.map { "`\($0)`" } ?? "missing"), not \
             `timeoutSeconds: connectTimeoutSeconds` — a literal or a stale \
             capture there would silently stop honoring \
             `settingsStore.connectTimeoutSeconds`.
+            """)
+    }
+
+    /// The same call's other settings-derived argument: spec §5b's one
+    /// number, which sizes the FTP transfer pool.
+    ///
+    /// Looked up by LABEL rather than by position, so an argument added
+    /// after it does not move the check onto something else — and so a
+    /// missing argument reads as missing rather than as the neighbour.
+    @Test func theConnectorClosureForwardsTheLiveTransferSlotCount() throws {
+        let source = try SourceCorpus.text(of: Self.lifecycleFile)
+        let lines = source.components(separatedBy: "\n")
+        guard let arguments = Self.connectCallArguments(in: lines) else {
+            Issue.record("""
+                no `\(Self.anchor)` call found in ContentView+Lifecycle.swift — \
+                re-anchor this guard.
+                """)
+            return
+        }
+        let slotsArgument = arguments.first { $0.hasPrefix("transferSlots:") }
+        #expect(slotsArgument == "transferSlots: transferSlots", """
+            the `\(Self.anchor)` call's `transferSlots:` argument is \
+            \(slotsArgument.map { "`\($0)`" } ?? "missing"), not \
+            `transferSlots: transferSlots` — a literal, \
+            `SettingsStore.defaultMaxConcurrentTransfers` or a stale capture \
+            there is spec §5b's defect: at the shipped default of 3 it looks \
+            identical to the live read, and it is wrong at every other value \
+            the user can set.
             """)
     }
 
@@ -99,43 +141,57 @@ struct ConnectTimeoutAppWiringGuardTests {
     // MARK: - Scanner self-tests (synthetic source, so the scanner cannot
     // silently pass just because the real file moved or failed to read)
 
+    /// The synthetic call every self-test below plants against, with the two
+    /// settings-derived arguments spelled by the caller. The sanctioned
+    /// spelling is `timeoutSeconds: connectTimeoutSeconds` and
+    /// `transferSlots: transferSlots`.
+    private static func planted(timeout: String, slots: String) -> [String] {
+        """
+        return try await BackendDescriptor.openConnection(
+            config, hostKey: decider,
+            certificate: .asking { candidate in await certificateBridge.ask(candidate) },
+            timeoutSeconds: \(timeout),
+            transferSlots: \(slots))
+        """.components(separatedBy: "\n")
+    }
+
     @Test func scannerFlagsAHardcodedLiteralTimeout() {
-        let source = """
-            return try await BackendDescriptor.openConnection(
-                config, hostKey: decider,
-                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
-                timeoutSeconds: 10)
-            """
-        let lines = source.components(separatedBy: "\n")
-        let arguments = Self.connectCallArguments(in: lines)
-        #expect(arguments?.count == 4)
-        #expect(arguments?.last != "timeoutSeconds: connectTimeoutSeconds")
+        let arguments = Self.connectCallArguments(
+            in: Self.planted(timeout: "10", slots: "transferSlots"))
+        #expect(arguments?.count == 5)
+        #expect(arguments?.first { $0.hasPrefix("timeoutSeconds:") } != "timeoutSeconds: connectTimeoutSeconds")
+        #expect(arguments?.first { $0.hasPrefix("transferSlots:") } == "transferSlots: transferSlots")
     }
 
     @Test func scannerAcceptsTheLiveLocal() {
-        let source = """
-            return try await BackendDescriptor.openConnection(
-                config, hostKey: decider,
-                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
-                timeoutSeconds: connectTimeoutSeconds)
-            """
-        let lines = source.components(separatedBy: "\n")
-        let arguments = Self.connectCallArguments(in: lines)
-        #expect(arguments?.count == 4)
-        #expect(arguments?.last == "timeoutSeconds: connectTimeoutSeconds")
+        let arguments = Self.connectCallArguments(
+            in: Self.planted(timeout: "connectTimeoutSeconds", slots: "transferSlots"))
+        #expect(arguments?.count == 5)
+        #expect(arguments?.first { $0.hasPrefix("timeoutSeconds:") } == "timeoutSeconds: connectTimeoutSeconds")
+        #expect(arguments?.first { $0.hasPrefix("transferSlots:") } == "transferSlots: transferSlots")
     }
 
     @Test func scannerFlagsAStaleDifferentlyNamedCapture() {
-        let source = """
-            return try await BackendDescriptor.openConnection(
-                config, hostKey: decider,
-                certificate: .asking { candidate in await certificateBridge.ask(candidate) },
-                timeoutSeconds: capturedTimeoutFromTabCreation)
-            """
-        let lines = source.components(separatedBy: "\n")
-        let arguments = Self.connectCallArguments(in: lines)
-        #expect(arguments?.count == 4)
-        #expect(arguments?.last != "timeoutSeconds: connectTimeoutSeconds")
+        let arguments = Self.connectCallArguments(
+            in: Self.planted(
+                timeout: "capturedTimeoutFromTabCreation", slots: "capturedSlotsFromTabCreation"))
+        #expect(arguments?.count == 5)
+        #expect(arguments?.first { $0.hasPrefix("timeoutSeconds:") } != "timeoutSeconds: connectTimeoutSeconds")
+        #expect(arguments?.first { $0.hasPrefix("transferSlots:") } != "transferSlots: transferSlots")
+    }
+
+    /// The slot spelling that looks right and is spec §5b's defect: the
+    /// shipped default, which agrees with the live read at 3 and nowhere
+    /// else. The timeout half of the same call is sanctioned here, so a
+    /// scanner that flagged the pair for the wrong reason would show.
+    @Test func scannerFlagsTheShippedDefaultAsTheSlotCount() {
+        let arguments = Self.connectCallArguments(
+            in: Self.planted(
+                timeout: "connectTimeoutSeconds",
+                slots: "SettingsStore.defaultMaxConcurrentTransfers"))
+        #expect(arguments?.count == 5)
+        #expect(arguments?.first { $0.hasPrefix("timeoutSeconds:") } == "timeoutSeconds: connectTimeoutSeconds")
+        #expect(arguments?.first { $0.hasPrefix("transferSlots:") } != "transferSlots: transferSlots")
     }
 
     // MARK: - Scanner

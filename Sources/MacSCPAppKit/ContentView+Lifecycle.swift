@@ -327,10 +327,20 @@ extension ContentView {
                 // written any other way.
                 //
                 // Read HERE, at the moment this connect attempt actually
-                // runs, not once at `makeTab` time: capturing the `Int` up
-                // front would have baked in whatever the setting was when
+                // runs, not once at `makeTab` time: capturing the `Int`s up
+                // front would have baked in whatever the settings were when
                 // the tab was CREATED, silently ignoring any later change
                 // (the Settings UI is what makes that observable).
+                //
+                // `maxConcurrentTransfers` is the FTP transfer pool's size
+                // (spec §5b: one number, the existing one — the same value
+                // `maxConcurrent:` below hands the transfer queue, and no
+                // second control). It reaches the pool of THIS connect
+                // attempt only: a pool's slot count is decided when it is
+                // built, so a user who moves the setting while a tab is
+                // connected gets the new size on the next connect, not on
+                // the open one. The other three backends ignore it
+                // (`BackendDescriptor.openConnection`).
                 //
                 // Hop explicitly instead of reading `settingsStore` — which
                 // is `@MainActor` — as if this closure were already on that
@@ -342,13 +352,14 @@ extension ContentView {
                 // with. `MainActor.run` is accepted by both and costs
                 // nothing when the caller already is the main actor, which
                 // it always is here (`ConnectionViewModel` is `@MainActor`).
-                let connectTimeoutSeconds = await MainActor.run {
-                    settingsStore.connectTimeoutSeconds
+                let (connectTimeoutSeconds, transferSlots) = await MainActor.run {
+                    (settingsStore.connectTimeoutSeconds, settingsStore.maxConcurrentTransfers)
                 }
                 return try await BackendDescriptor.openConnection(
                     config, hostKey: decider,
                     certificate: .asking { candidate in await certificateBridge.ask(candidate) },
-                    timeoutSeconds: connectTimeoutSeconds)
+                    timeoutSeconds: connectTimeoutSeconds,
+                    transferSlots: transferSlots)
             }),
             certificateBridge: certificateBridge,
             limiter: limiter,

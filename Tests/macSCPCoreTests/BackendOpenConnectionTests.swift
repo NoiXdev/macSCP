@@ -45,7 +45,8 @@ struct BackendOpenConnectionTests {
         for config in Self.configs {
             await #expect {
                 _ = try await BackendDescriptor.openConnection(
-                    config, hostKey: .refusing, certificate: .refusing, timeoutSeconds: 1)
+                    config, hostKey: .refusing, certificate: .refusing, timeoutSeconds: 1,
+                    transferSlots: 1)
             } throws: { error in
                 guard case RemoteFSError.protocolError(let reason) = error else { return true }
                 return !reason.hasPrefix(Self.refusalPrefix)
@@ -62,7 +63,7 @@ struct BackendOpenConnectionTests {
     @Test func theRefusalThisRecognizesIsOneABackendReallyProduces() async throws {
         await #expect {
             _ = try await BackendDescriptor.descriptor(for: .ssh)
-                .connect(Self.s3Config, .refusing, .refusing, 1)
+                .connect(Self.s3Config, .refusing, .refusing, 1, 1)
         } throws: { error in
             guard case RemoteFSError.protocolError(let reason) = error else { return false }
             return reason.hasPrefix(Self.refusalPrefix)

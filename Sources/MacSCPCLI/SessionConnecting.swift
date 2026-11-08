@@ -112,11 +112,20 @@ func connect(
     //
     // The CLI reads no user settings at all (no `settings.json` of its
     // own), so it uses the settings default rather than a live,
-    // user-configured value.
+    // user-configured value. That is the rule
+    // `SettingsStore.defaultConnectTimeoutSeconds` states, and it decides
+    // `transferSlots:` below the same way it decides `timeoutSeconds:`:
+    // reachable is not the same as read — `SettingsStore.defaultDirectory`
+    // is the very directory `resolveSession` already opens the session
+    // store in, so this binary COULD load `settings.json`, and by standing
+    // decision it does not. There is deliberately no flag for the number
+    // either (spec §5b: "there is no second control"); a scripted user who
+    // wants a different FTP pool size changes the setting the app persists.
     do {
         return try await BackendDescriptor.openConnection(
             config, hostKey: makeDecider(policy: options.hostKeyPolicy), certificate: .refusing,
-            timeoutSeconds: SettingsStore.defaultConnectTimeoutSeconds)
+            timeoutSeconds: SettingsStore.defaultConnectTimeoutSeconds,
+            transferSlots: SettingsStore.defaultMaxConcurrentTransfers)
     } catch {
         // A missing passphrase for a key in the managed key directory, when
         // the chain's managed-key link found `managed_keys.json` unreadable,

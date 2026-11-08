@@ -565,7 +565,8 @@ struct FTPFieldSchemaTests {
             host: "127.0.0.1", port: 1, username: "tim", security: .plain, password: "")
         do {
             _ = try await BackendDescriptor.openConnection(
-                .ftp(closed), hostKey: .refusing, certificate: .refusing, timeoutSeconds: 1)
+                .ftp(closed), hostKey: .refusing, certificate: .refusing, timeoutSeconds: 1,
+                transferSlots: SettingsStore.defaultMaxConcurrentTransfers)
             Issue.record("expected a refusal")
         } catch let error as RemoteFSError {
             guard case .connectionFailed(let reason) = error else {
