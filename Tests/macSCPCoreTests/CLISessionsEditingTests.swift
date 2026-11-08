@@ -129,11 +129,6 @@ struct CLISessionsEditingTests {
         #expect(webdav.useNextcloudPath)
     }
 
-    /// The group path is the one `sessions --json` prints back — `" / "`
-    /// separated — and the groups along it are created when they are
-    /// missing. Also the proof that `list` stayed the DEFAULT subcommand: the
-    /// verification runs `sessions --json`, with no verb, exactly as every
-    /// script written before this task did.
     /// `--kind ftp`, end to end through the binary (FTP plan Task 10): the
     /// flags FTP owns are accepted and written, and the ownership holds in
     /// BOTH directions — an FTP-only flag is refused for another kind, and
@@ -229,6 +224,81 @@ struct CLISessionsEditingTests {
         #expect(refused.stderr.contains("--host is required for --kind ftp"), "\(refused.stderr)")
     }
 
+    /// Changing the security mode moves the port the way the app's own form
+    /// moves it, and only then (Ruling T10.9).
+    ///
+    /// `ConnectionViewModel.selectFTPSecurity(_:)` moves the port when the
+    /// port field holds the OUTGOING mode's default — "that is the only
+    /// evidence this form has that nobody typed it", its doc comment says —
+    /// and leaves a port the person typed alone. `edited(_:removingTags:)`
+    /// moved nothing at all, so a session stored at 21 and edited to implicit
+    /// FTPS kept 21 and would not connect, where the form writes 990.
+    ///
+    /// Three journeys, and the ports are read off `FTPSecurityMode
+    /// .defaultPort` rather than written as numbers:
+    ///
+    /// 1. stored port == the outgoing mode's default → it follows the switch;
+    /// 2. a typed port → it does not;
+    /// 3. `--port` given in the same invocation → that port wins, and the
+    ///    move does not fire behind it.
+    ///
+    /// The limit the form states is the limit here: somebody who typed the
+    /// outgoing default itself is indistinguishable from somebody who left
+    /// it, and their port follows the switch. That is journey 1 as far as
+    /// this store can see.
+    @Test func editingTheSecurityModeMovesOnlyAPortThatWasTheOldModesDefault() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        // 1. Untouched port: added without --port, so it is explicit FTPS's
+        //    own default.
+        #expect(try await cli.run([
+            "sessions", "add", "followed", "--kind", "ftp", "--host", "ftp.example.com",
+        ]).status == 0)
+        #expect(cli.storedSession(named: "followed")?.ftp?.port
+            == FTPSecurityMode.explicitTLS.defaultPort)
+        let followed = try await cli.run([
+            "sessions", "edit", "followed",
+            "--security", FTPSecurityMode.implicitTLS.rawValue,
+        ])
+        #expect(followed.status == 0, "sessions edit failed: \(followed.stderr)")
+        #expect(cli.storedSession(named: "followed")?.ftp?.port
+            == FTPSecurityMode.implicitTLS.defaultPort)
+
+        // And back the other way, so the rule is not one-directional.
+        #expect(try await cli.run([
+            "sessions", "edit", "followed",
+            "--security", FTPSecurityMode.explicitTLS.rawValue,
+        ]).status == 0)
+        #expect(cli.storedSession(named: "followed")?.ftp?.port
+            == FTPSecurityMode.explicitTLS.defaultPort)
+
+        // 2. A typed port stays put.
+        #expect(try await cli.run([
+            "sessions", "add", "typed", "--kind", "ftp",
+            "--host", "ftp.example.com", "--port", "2121",
+        ]).status == 0)
+        #expect(try await cli.run([
+            "sessions", "edit", "typed",
+            "--security", FTPSecurityMode.implicitTLS.rawValue,
+        ]).status == 0)
+        let typed = try #require(cli.storedSession(named: "typed")?.ftp)
+        #expect(typed.security == .implicitTLS)
+        #expect(typed.port == 2121)
+
+        // 3. `--port` in the same invocation wins over the move.
+        #expect(try await cli.run([
+            "sessions", "add", "both", "--kind", "ftp", "--host", "ftp.example.com",
+        ]).status == 0)
+        #expect(try await cli.run([
+            "sessions", "edit", "both",
+            "--security", FTPSecurityMode.implicitTLS.rawValue, "--port", "2121",
+        ]).status == 0)
+        let both = try #require(cli.storedSession(named: "both")?.ftp)
+        #expect(both.security == .implicitTLS)
+        #expect(both.port == 2121)
+    }
+
     /// An FTP session's fields change the way every other kind's do, and the
     /// flags left out change nothing.
     @Test func editChangesAnFTPSessionsOwnFields() async throws {
@@ -287,6 +357,19 @@ struct CLISessionsEditingTests {
         #expect(cli.storedSession(named: "files")?.ftp?.host == "ftp.example.com")
     }
 
+    /// The group path is the one `sessions --json` prints back — `" / "`
+    /// separated — and the groups along it are created when they are
+    /// missing. Also the proof that `list` stayed the DEFAULT subcommand: the
+    /// verification runs `sessions --json`, with no verb, exactly as every
+    /// script written before this task did.
+    ///
+    /// (These five lines were this test's when they were written, were
+    /// separated from it on 2026-11-08 by FTP cases inserted directly beneath
+    /// them with no blank line, and are restored here. The cost ran both ways:
+    /// this test lost the only record that it is also the `list`-stays-default
+    /// proof, and `kindFTPIsAcceptedAndItsFlagsAreOfferedForItAlone`'s failure
+    /// message opened with four lines about group paths, because a failing
+    /// test's doc comment is echoed into it.)
     @Test func addCreatesTheGroupPathAndCarriesItsTagsAndPanes() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }
@@ -1096,34 +1179,71 @@ struct CLISessionsStoreEditingGuardTests {
 
     // MARK: - Positive: both files exist and do the real work
 
+    /// **Each anchor reads the narrowest view of the file that can still find
+    /// it**, so that no comment can satisfy any of them. Which view that is
+    /// was measured per anchor rather than chosen per file, 2026-11-08, by
+    /// counting each anchor in each of `SourceCorpus`' three views of
+    /// `SessionFieldOptions.swift`:
+    ///
+    /// | anchor | `text` | `commentFree` | `code` |
+    /// |---|---|---|---|
+    /// | `ParsableArguments` | 1 | 1 | 1 |
+    /// | `--bucket` | 8 | 7 | 0 |
+    /// | the `FTPField` map | 1 | 1 | 1 |
+    ///
+    /// So the first and third read `code(of:)` — comments AND string literals
+    /// blanked — and `--bucket` reads `commentFree(of:)`, comments blanked and
+    /// literals kept, because every one of its eight occurrences is inside a
+    /// string literal except the one at `:241`, which is a comment. `code`
+    /// finds none of them and would be an anchor that can never match, which
+    /// is the "check pointed at the wrong region" CLAUDE.md describes; `text`
+    /// would let that one comment carry it. `commentFree` is the view that
+    /// holds the real claim and refuses the comment, and 7 against 8 is the
+    /// comment it refuses. Measured as a GREEN/RED pair on 2026-11-08, both
+    /// through `scripts/mutation-probe` against the same plant — every
+    /// `--bucket` substring renamed outside comments, so only `:241` carries
+    /// it: RED with this anchor on `commentFree(of:)`, caught by this test,
+    /// and GREEN with it put back on `text(of:)`.
+    ///
+    /// **A residual the same probe found, left as it is.** This anchor is a
+    /// SUBSTRING check, so `"--bucket-list"` satisfies it on its own: a tree
+    /// with no `--bucket` flag at all, but still carrying `--bucket-list`,
+    /// passes. A first plant that renamed only `"--bucket"` came back GREEN
+    /// for exactly that reason and not for a comment. It is left because of
+    /// what this anchor is FOR — evidence that the scanner is reading a real
+    /// implementation rather than an empty file, which `--bucket-list` is
+    /// just as good evidence of. It is not a claim that `--bucket` itself
+    /// exists, and nothing should read it as one.
+    ///
+    /// (Withdrawn: all three anchors read `SourceCorpus.text(of:)` until
+    /// 2026-11-08, and the FTP one was moved to a longer string that day in
+    /// the belief that this was fixed. It was not — a longer string is not a
+    /// different KIND of thing, and the review's plant P6, which added the one
+    /// line `// Equivalent to FTPField.allCases.compactMap(flag(for:)),
+    /// written out.` above the violation, came back
+    /// `RESULT: GREEN — 13 test(s) ran and NONE of them noticed the plant.`
+    /// while the same violation without that comment was caught by three
+    /// tests. The commit that moved it claimed "both halves of that section's
+    /// remedy"; it applied the prose half.)
     @Test func theFieldOptionsFileExistsAndCarriesTheKindOwnershipTable() throws {
         #expect(FileManager.default.fileExists(atPath: Self.fieldOptionsFile.path))
-        let source = try SourceCorpus.text(of: Self.fieldOptionsFile)
-        #expect(source.contains("ParsableArguments"), """
+        let code = try SourceCorpus.code(of: Self.fieldOptionsFile)
+        let commentFree = try SourceCorpus.commentFree(of: Self.fieldOptionsFile)
+        #expect(code.contains("ParsableArguments"), """
             SessionFieldOptions.swift declares no ParsableArguments — the \
             positive anchor beside the negative check below has nothing to \
             confirm the scanner is reading a real implementation.
             """)
-        #expect(source.contains("--bucket"), """
-            SessionFieldOptions.swift no longer names --bucket — same concern \
-            as ParsableArguments above.
+        #expect(commentFree.contains("--bucket"), """
+            SessionFieldOptions.swift no longer names --bucket outside a \
+            comment — same concern as ParsableArguments above.
             """)
         // FTP's half of that table is DERIVED, not written out: the flags
         // are the image of FTP's field enumeration under the file's own
         // `flag(for:)`. A build that spelled them instead would leave the
         // flag list free to fall behind the field list, and the next field
         // added to `FTPFieldSchema` would be the one nobody noticed.
-        //
-        // The anchor is the CALL, not the type's name. It was the name
-        // until the probe below: a mutation that replaced the real call
-        // with a written-out list of four flags left this check GREEN,
-        // because `flag(for:)`'s own doc comment quoted the name and the
-        // scan read the comment (`scripts/mutation-probe`, 2026-11-08,
-        // label "FTP's flag list is spelled out and drops --security":
-        // caught by `kindFTPIsAcceptedAndItsFlagsAreOfferedForItAlone` and
-        // `editChangesAnFTPSessionsOwnFields`, not by this). The comment
-        // there no longer spells it, and this reads the expression.
-        #expect(source.contains("FTPField.allCases.compactMap("), """
+        #expect(code.contains("FTPField.allCases.compactMap("), """
             SessionFieldOptions.swift no longer maps over FTP's field cases \
             to build its flag list — the flag list and the field list can \
             now disagree without anything saying so.

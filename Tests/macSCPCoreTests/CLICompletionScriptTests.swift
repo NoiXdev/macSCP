@@ -145,6 +145,33 @@ struct CLICompletionScriptTests {
         }
     }
 
+    /// `kebabCased` really is `ArgumentParser`'s rule, including for the one
+    /// case the two could plausibly differ on: a RUN of upper-case letters.
+    ///
+    /// The derivation this suite depends on is
+    /// `NameSpecification.swift:255`'s `key.name.convertedToSnakeCase(
+    /// separator: "-")`, and the first two rows below are that function's own
+    /// documented examples
+    /// (`ArgumentParser/Utilities/StringExtensions.swift`). The third is the
+    /// shape `FTPField` does not currently contain — no raw value there has a
+    /// run — so without this case the helper's claim about runs would be
+    /// untested in both directions and the ONE field that introduced one
+    /// would be the field that found out.
+    ///
+    /// Why a port rather than a reimplementation: the rule is not obvious
+    /// from its own output. A run's last letter starts the NEXT word when a
+    /// lower-case letter follows it (`URLSession` → `url-session`, the `S`
+    /// going with `ession`), which no simple
+    /// hyphen-before-each-capital loop produces.
+    @Test func theKebabCasingIsArgumentParsersOwnIncludingForAnUpperCaseRun() {
+        #expect(Self.kebabCased("myProperty") == "my-property")
+        #expect(Self.kebabCased("myURLProperty") == "my-url-property")
+        #expect(Self.kebabCased("initialTLSPath") == "initial-tls-path")
+        // The field this suite actually reads, so the pin is not only about
+        // hypotheticals.
+        #expect(Self.kebabCased(FTPField.initialPath.rawValue) == "initial-path")
+    }
+
     /// The flag each `FTPField` carries on the command line, or `nil` for a
     /// field the command line does not carry.
     ///
@@ -168,21 +195,53 @@ struct CLICompletionScriptTests {
         }
     }
 
-    /// `initialPath` → `initial-path`: a lower-case letter is inserted
+    /// `initialPath` → `initial-path`, the way `ArgumentParser` derives a
+    /// `.long` name from a property: a **port** of
+    /// `String.convertedToSnakeCase(separator:)`, which
+    /// `NameSpecification.swift:255` is what calls, read out of
+    /// `ArgumentParser/Utilities/StringExtensions.swift` on 2026-11-08 rather
+    /// than guessed at.
+    ///
+    /// The part worth porting instead of approximating is the upper-case
+    /// RUN. A separator goes in before an upper-case letter only while
+    /// `separateOnUppercase` holds, and a run clears it until its last letter
+    /// — recognised by the next letter being upper-case and the one after
+    /// that being lower-case — so `myURLProperty` becomes `my-url-property`
+    /// and not `my-u-r-l-property`.
+    ///
+    /// (Withdrawn wording, verbatim: "a lower-case letter is inserted
     /// before, and an upper-case run is folded into, a hyphen-separated
     /// word, which is how `ArgumentParser` derives a `.long` name from a
-    /// property. Only ASCII, because every field identifier here is.
+    /// property." The claim about `ArgumentParser` was right and the loop
+    /// under it was not: it emitted one hyphen per upper-case character, so
+    /// `initialTLSPath` gave `initial-t-l-s-path`. Harmless at the time — no
+    /// `FTPField` raw value carries a run — but a comment the code did not
+    /// make, and the resolution was to make the code true rather than to
+    /// weaken the comment, since the comment is the behaviour this suite
+    /// needs.)
+    ///
+    /// `theKebabCasingIsArgumentParsersOwnIncludingForAnUpperCaseRun` pins
+    /// all of it, including the two examples that function's own doc comment
+    /// gives.
     static func kebabCased(_ name: String) -> String {
-        var out = ""
-        for character in name {
+        guard !name.isEmpty else { return "" }
+        var result = ""
+        var separateOnUppercase = true
+        for index in name.indices {
+            let next = name.index(after: index)
+            let character = name[index]
             if character.isUppercase {
-                out.append("-")
-                out.append(Character(character.lowercased()))
+                if separateOnUppercase && !result.isEmpty { result += "-" }
+                separateOnUppercase =
+                    next < name.endIndex && name[next].isUppercase
+                    && name.index(after: next) < name.endIndex
+                    && name[name.index(after: next)].isLowercase
             } else {
-                out.append(character)
+                separateOnUppercase = character != "-"
             }
+            result += character.lowercased()
         }
-        return out
+        return result
     }
 
     /// Every distinct long-flag token in a generated script — bash's form,

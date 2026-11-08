@@ -730,6 +730,18 @@ public enum ImportPreviewPlanner {
     /// choice above is therefore made on the import's own contract — absence
     /// does not clobber — and not on a reading of the other program's
     /// behaviour.
+    ///
+    /// **The COMMAND LINE does the opposite with the same empty string, and
+    /// that is not a contradiction.** `SessionFieldOptions
+    /// .validateGivenValues()` accepts `--initial-path ""` and CLEARS the
+    /// folder, where every other string flag refuses a blank. The two
+    /// channels differ in what an empty value is evidence OF: a value the
+    /// person typed at a prompt is a statement, and the only way they could
+    /// erase a folder from there; a value read out of another program's file
+    /// may be the absence of one, and this function has no way to tell which
+    /// — see the unmeasured paragraph above. Both behaviours are correct for
+    /// their channel (Rulings T9.10 and T10.5, FTP plan); a reader who finds
+    /// one and thinks the other is a bug should read both before filing it.
     private static func updateValues(
         of bookmark: ExternalBookmark, kind: BookmarkKind, over old: FieldValues
     ) -> FieldValues {

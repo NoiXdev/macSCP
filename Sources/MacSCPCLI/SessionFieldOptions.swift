@@ -142,16 +142,23 @@ struct SessionFieldOptions: ParsableArguments {
     /// image of every case of that enum under this function, not a second
     /// copy of the field list.
     ///
-    /// The sentence above deliberately does NOT spell the expression that
-    /// enumerates those cases, and the reason is measured rather than
-    /// stylistic: `CLISessionsStoreEditingGuardTests
+    /// `CLISessionsStoreEditingGuardTests
     /// .theFieldOptionsFileExistsAndCarriesTheKindOwnershipTable` scans this
-    /// file for that expression, and while this comment quoted it the scan
-    /// was satisfied by the COMMENT. A probe that replaced the real call
-    /// with a written-out list of four flags was caught by two behavioural
-    /// cases and NOT by the scan (`scripts/mutation-probe`, 2026-11-08, FTP
-    /// plan Task 10). CLAUDE.md's "Source-scanning guards read comments
-    /// too", happening in the same commit as the guard it is about.
+    /// file for the expression that enumerates those cases, and it reads a
+    /// view with comments and string literals BLANKED — so nothing written
+    /// here, in prose or quoted verbatim, can satisfy it. That is the
+    /// structural half, and it arrived a commit after the prose half.
+    ///
+    /// (Withdrawn wording, verbatim: "The sentence above deliberately does
+    /// NOT spell the expression that enumerates those cases, and the reason
+    /// is measured rather than stylistic: … while this comment quoted it the
+    /// scan was satisfied by the COMMENT." That was true of the scan as it
+    /// then stood — it read the raw file, and a probe that replaced the real
+    /// call with a written-out list of four flags was caught by two
+    /// behavioural cases and NOT by the scan. It is no longer the reason to
+    /// avoid quoting, because the scan can no longer read a comment at all;
+    /// the record of that failure now lives at the scan, which is where a
+    /// reader of the guard needs it.)
     ///
     /// `username` is `--user`, the flag SSH and WebDAV already carry for the
     /// same thing; a third spelling of one concept is what sharing it
@@ -273,6 +280,19 @@ struct SessionFieldOptions: ParsableArguments {
     /// line. Refusing it would make the field writable and not erasable —
     /// the shape the four `@Flag`s have and state as their own limit. Both
     /// writers below map a blank to `nil`.
+    ///
+    /// **The IMPORT path does the opposite with the same empty string, and
+    /// that is not a contradiction.** `ImportPreviewPlanner
+    /// .updateValues(of:kind:over:)` treats a bookmark whose `Path` is
+    /// absent, empty or blank as SILENCE and keeps the folder on record,
+    /// because absence must not clobber and what Cyberduck writes for a
+    /// bookmark with no default folder is unmeasured (Ruling T9.10). The two
+    /// channels differ in what an empty value is evidence OF: here it is a
+    /// statement somebody typed, and the only way they could erase a folder
+    /// from a command line; there it is a field read out of another
+    /// program's file. Both are correct for their channel (Ruling T10.5);
+    /// the reasoning lives at both ends so that whoever finds one does not
+    /// file a bug against the other.
     private var givenStringValues: [(flag: String, value: String)] {
         [
             ("--host", host), ("--user", user), ("--key", key),
@@ -325,10 +345,21 @@ struct SessionFieldOptions: ParsableArguments {
         case .s3: return [("--endpoint", endpoint), ("--bucket", bucket), ("--access-key", accessKey)]
         case .webdav: return [("--url", url), ("--user", user)]
         // The HOST and nothing else. FTP's port follows the security mode
-        // when it is left out, and NEITHER credential field is required —
+        // when it is left out, and NEITHER credential field is required:
         // `FTPFieldSchema.credential` marks them optional because anonymous
-        // FTP is the oldest real deployment this protocol has, and `add`
-        // must not be stricter than the form it writes records for.
+        // FTP is the oldest real deployment this protocol has, and refusing
+        // one here would refuse a session the app itself will save.
+        //
+        // (Withdrawn wording, verbatim: "and `add` must not be stricter than
+        // the form it writes records for." As a rule about this table it is
+        // false two lines above: the `.webdav` arm requires `--user`, while
+        // `WebDAVFieldSchema.connection` marks only `baseURL` required and
+        // its `username` sits in the CREDENTIAL schema with no `isRequired`
+        // at all — counted 2026-11-08, one `isRequired: true` in that file,
+        // at `:25`, on `baseURL`. So this line is FTP's reason and not a
+        // principle the table follows; whether the WebDAV arm should be
+        // relaxed to match its form is a question for whoever owns WebDAV,
+        // and nothing here changes it.)
         case .ftp: return [("--host", host)]
         }
     }
@@ -393,7 +424,17 @@ struct SessionFieldOptions: ParsableArguments {
             // the flags and the required-field set for FTP are FTP plan
             // Task 10's, and a `newSession` that writes a half-specified
             // record is worse than one that refuses." Task 10 named them,
-            // and this arm writes the record.)
+            // and this arm writes the record.
+            //
+            // That wording had itself withdrawn an earlier one, and the
+            // record is carried forward here rather than dropped with the
+            // sentence that held it — verbatim: "`StoredSession` has no FTP
+            // block until FTP plan Task 8, and a session record of this kind
+            // with no block would be one nothing can dial." Withdrawn in
+            // Task 3's own commit series, because the block landed in Task 3
+            // alongside the arm, so the reason was false as committed. Both
+            // withdrawals are of reasons to REFUSE; neither says anything
+            // about what the arm now writes, which is the paragraph above.)
             let mode = security ?? FTPFieldSchema.security(FTPFieldSchema.defaults)
             let path = initialPath?.trimmingCharacters(in: .whitespacesAndNewlines)
             session.ftp = StoredFTPConfig(
@@ -432,14 +473,37 @@ struct SessionFieldOptions: ParsableArguments {
     /// nobody has asked to turn them off from is a bigger surface than the
     /// gap.
     ///
-    /// That contract has one edge worth stating for FTP: `--security` does
-    /// NOT move `--port` with it. `newSession` applies the new mode's
-    /// default port because nothing was there to keep; an edit has a stored
-    /// port, and silently replacing one the person typed is the
-    /// silent-wrong-port bug `FTPFieldSchema.port(_:for:)` documents. So
-    /// changing to implicit FTPS on a session saved at 21 is two flags, and
-    /// the one-flag form leaves a session that will not connect — visibly,
-    /// at the next dial, rather than invisibly in the store.
+    /// FTP's `--security` is the one exception to that contract, and it is
+    /// the app's exception rather than this command line's: it mirrors
+    /// `ConnectionViewModel.selectFTPSecurity(_:)`, the form's own picker
+    /// handler. The form moves the port when the port field holds the
+    /// OUTGOING mode's default — "that is the only evidence this form has
+    /// that nobody typed it", as that function's doc comment puts it — and
+    /// leaves a port the person typed exactly where it is. The FTP block
+    /// below does the same, with `--port` given in the same invocation
+    /// counting as a port the person just typed.
+    ///
+    /// Both halves matter, and the limit of the second is stated rather than
+    /// hidden, as the form states it: somebody who typed the outgoing mode's
+    /// default itself is indistinguishable from somebody who left it alone,
+    /// and their port follows the switch.
+    ///
+    /// (Withdrawn wording, verbatim: "That contract has one edge worth
+    /// stating for FTP: `--security` does NOT move `--port` with it.
+    /// `newSession` applies the new mode's default port because nothing was
+    /// there to keep; an edit has a stored port, and silently replacing one
+    /// the person typed is the silent-wrong-port bug
+    /// `FTPFieldSchema.port(_:for:)` documents. So changing to implicit FTPS
+    /// on a session saved at 21 is two flags, and the one-flag form leaves a
+    /// session that will not connect — visibly, at the next dial, rather than
+    /// invisibly in the store." Two things were wrong with it. It argued only
+    /// the typed-port case, which the form ALSO refuses to touch, and said
+    /// nothing about the untouched-port case, which the form does move — so
+    /// it read as a reasoned divergence from the form while never naming the
+    /// form. And its last clause called the result visible: a session stored
+    /// at 21 and switched to implicit FTPS keeps 21, which fails at the dial
+    /// with no indication that the mode switch is what put it there.
+    /// Ruling T10.9, 2026-11-08.)
     ///
     /// `--group` is NOT applied here: filing under a group path may have to
     /// CREATE groups, which is a store write, and this function is pure so
@@ -477,9 +541,28 @@ struct SessionFieldOptions: ParsableArguments {
         }
         if var ftp = session.ftp {
             if let host { ftp.host = host }
-            if let port { ftp.port = port }
             if let user { ftp.username = user }
-            if let security { ftp.security = security }
+            if let security {
+                // `selectFTPSecurity(_:)`'s rule, read off the stored block
+                // instead of a form's text field. The outgoing mode is read
+                // BEFORE the new one is written, which is the same ordering
+                // the form needs `interceptEdit` for: after the write there
+                // is no way left to tell a default from a typed port.
+                //
+                // `port == nil` is this side's "nobody typed it": a `--port`
+                // in the same invocation is a port the person just typed, so
+                // it wins and the move does not fire behind it. The form has
+                // no equivalent because its picker and its port field are
+                // not changed in one atomic action.
+                let outgoing = ftp.security
+                ftp.security = security
+                if port == nil, security != outgoing, ftp.port == outgoing.defaultPort {
+                    ftp.port = security.defaultPort
+                }
+            }
+            // AFTER the mode, so an explicit `--port` is the last word on the
+            // port whichever order the flags were typed in.
+            if let port { ftp.port = port }
             if let initialPath {
                 // Blank CLEARS it (`validateGivenValues`' note above):
                 // `nil` is "whatever folder the server starts in", which is

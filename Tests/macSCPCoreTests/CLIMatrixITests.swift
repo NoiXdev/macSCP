@@ -2232,8 +2232,44 @@ struct CLIMatrixWebDAVITests {
 }
 
 /// The fourth protocol matrix (FTP plan Task 10), with the same cases in the
-/// same order as the three suites above — a suite that ran a subset would
-/// read as covered and measure less.
+/// same order as `CLIMatrixS3ITests` and `CLIMatrixWebDAVITests` — a suite
+/// that ran a subset would read as covered and measure less.
+///
+/// **Not SSH**, which carries nine cases more. Counted 2026-11-08 with, per
+/// suite:
+///
+///     awk '/^struct CLIMatrixFTPITests \{$/{f=1} f{print} f&&/^}$/{exit}' Tests/macSCPCoreTests/CLIMatrixITests.swift | /usr/bin/grep -o -F '@Test' | wc -l
+///
+/// which prints 18 for FTP, S3 and WebDAV and **27** for SSH. The `^`…`$`
+/// anchors on the struct line are not decoration, and the history is worth
+/// one sentence because it is this project's favourite trap. This comment
+/// quotes the command it states a figure for, so the first version — which
+/// opened its window on the plain substring `struct` + the suite's name + ` {`
+/// — opened it on THIS comment instead of on the declaration, swallowed the
+/// `@Test` in the line above, and printed 19 for a suite of 18. Measured
+/// 2026-11-08, after the comment existed, which is the only moment it could
+/// have been caught. A `///` line cannot match `^struct`. (Escaping the brace
+/// for the regex also removed the bare substring from this file, so the old
+/// spelling now prints 18 here too and cannot be used to reproduce the 19 —
+/// which is why the number is written down.) The nine are
+/// `listsThroughAPEMKeySession`, the four `start…` forwarding cases
+/// (`startDynamicForwardAnswersSOCKS`,
+/// `startLocalForwardCarriesTheSshdBanner`,
+/// `startRemoteForwardIsReachableInsideTheContainer`,
+/// `startEndsWithExitZeroOnSIGINT`), its two host-key cases
+/// (`startRefusesAnUnknownHostKey`, `startIsAHardStopOnAChangedHostKey`) and
+/// its two PTY cases (`askUnderAPTYPromptsAndNoRefuses`,
+/// `nonInteractiveUnderAPTYRefusesWithoutPrompting`) — every one of them
+/// about key auth, a forwarding or a prompt, which is to say about SSH and
+/// not about being a protocol matrix. There is nothing in FTP's 18 that SSH
+/// lacks.
+///
+/// (Withdrawn wording, verbatim: "with the same cases in the same order as
+/// the three suites above". True of two of the three. The `awk` window above
+/// is deliberate rather than decorative: the same count taken with
+/// `grep -A 200` read **22** for SSH, because that suite is longer than the
+/// window and the truncation is silent — the kind of figure CLAUDE.md says
+/// to re-run rather than remember.)
 ///
 /// **None of these cases has ever run.** They are declared here, gated like
 /// their siblings, and the container they dial is FTP plan Task 11's work in

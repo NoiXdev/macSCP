@@ -44,13 +44,44 @@ struct CLISecretSourcesSchemaTests {
     /// The environment-variable name is a property of the backend, not a
     /// branch in the CLI. S3 keeps the AWS-conventional name so existing
     /// pipelines need not relearn one.
+    ///
+    /// **Compared over `ConnectionKind.allCases`, never listed**, which is
+    /// what that first sentence has always argued for and what this test did
+    /// not do until 2026-11-08: it asserted `.s3`, `.webdav` and `.ssh`, read
+    /// as exhaustive and was not. Nothing was unpinned at the time — FTP had
+    /// `theSecretEnvironmentVariableIsNamedForFTP` beside it — but a FIFTH
+    /// kind would have left this naming four of five in silence, which is the
+    /// shape `everyConnectionKindHasAMatrixSuite` exists to refuse. One
+    /// dictionary against another, with `expectedSecretVariable(for:)`
+    /// exhaustive over the enum, so a fifth kind does not compile until
+    /// someone names its variable here.
+    ///
+    /// The overlap with the FTP test beside it is deliberate: this one says
+    /// every kind names the right VARIABLE, that one says the CLI's secret
+    /// CHAIN for an FTP session is built out of it in the right order. Only
+    /// names appear in either, never a value.
     @Test func eachBackendNamesItsOwnEnvironmentVariable() {
-        #expect(BackendDescriptor.descriptor(for: .s3).secretEnvironmentVariable
-            == "AWS_SECRET_ACCESS_KEY")
-        #expect(BackendDescriptor.descriptor(for: .webdav).secretEnvironmentVariable
-            == "MACSCP_PASSWORD")
-        #expect(BackendDescriptor.descriptor(for: .ssh).secretEnvironmentVariable
-            == "MACSCP_PASSWORD")
+        let named = Dictionary(uniqueKeysWithValues: ConnectionKind.allCases.map {
+            ($0, BackendDescriptor.descriptor(for: $0).secretEnvironmentVariable)
+        })
+        let expected = Dictionary(uniqueKeysWithValues: ConnectionKind.allCases.map {
+            ($0, Self.expectedSecretVariable(for: $0))
+        })
+        #expect(named == expected)
+    }
+
+    /// The variable each backend is expected to name. EXHAUSTIVE over
+    /// `ConnectionKind`; `nil` would mean a backend that takes no secret from
+    /// the environment, and no backend here is one.
+    private static func expectedSecretVariable(for kind: ConnectionKind) -> String? {
+        switch kind {
+        // The AWS convention, kept so existing pipelines need not relearn a
+        // name.
+        case .s3: return "AWS_SECRET_ACCESS_KEY"
+        // All three authenticate with a plain password, so no second or third
+        // name was invented for them.
+        case .ssh, .webdav, .ftp: return "MACSCP_PASSWORD"
+        }
     }
 
     /// FTP's variable, and the chain the CLI walks for an FTP session

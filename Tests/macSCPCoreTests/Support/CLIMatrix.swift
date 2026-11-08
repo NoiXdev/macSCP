@@ -421,11 +421,19 @@ struct CLIMatrix: Sendable {
         case .ftp:
             guard let ftp = session.ftp else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
             // Every field the fixture's own block fills, the way the three
-            // arms above do. The security mode is passed EXPLICITLY even
-            // though the rig's is the one `sessions add` would also refuse
-            // to guess: `plain` is not the form's default (explicit FTPS
-            // is), so a vector that left it out would save a session that
-            // dials the rig's control port expecting `AUTH TLS`.
+            // arms above do. The security mode is passed EXPLICITLY because
+            // the rig's is not the one `sessions add` defaults to: the rig
+            // runs `plain`, and a form left untouched is explicit FTPS
+            // (`FTPFieldSchema.defaults`). A vector that omitted the flag
+            // would therefore save a session that dials the rig's control
+            // port expecting to upgrade with `AUTH TLS`.
+            //
+            // (Withdrawn wording, verbatim: "The security mode is passed
+            // EXPLICITLY even though the rig's is the one `sessions add`
+            // would also refuse to guess". Its substance was this
+            // paragraph's; the sentence did not parse, and "would also
+            // refuse to guess" said the opposite of what `add` does, which
+            // is to apply the schema's default without being asked.)
             //
             // (Withdrawn wording, verbatim: "The shared flags only. The
             // security mode and the initial folder have no flag until FTP
