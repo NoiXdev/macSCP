@@ -1194,16 +1194,26 @@ struct CLISessionsStoreEditingGuardTests {
     /// So the first and third read `code(of:)` — comments AND string literals
     /// blanked — and `--bucket` reads `commentFree(of:)`, comments blanked and
     /// literals kept, because every one of its eight occurrences is inside a
-    /// string literal except the one at `:241`, which is a comment. `code`
+    /// string literal except one, which is prose inside
+    /// `validateKindOwnership(_:)`'s doc comment — the sentence about
+    /// `sessions add web --kind ssh --bucket backups`. `code`
     /// finds none of them and would be an anchor that can never match, which
     /// is the "check pointed at the wrong region" CLAUDE.md describes; `text`
     /// would let that one comment carry it. `commentFree` is the view that
     /// holds the real claim and refuses the comment, and 7 against 8 is the
     /// comment it refuses. Measured as a GREEN/RED pair on 2026-11-08, both
     /// through `scripts/mutation-probe` against the same plant — every
-    /// `--bucket` substring renamed outside comments, so only `:241` carries
-    /// it: RED with this anchor on `commentFree(of:)`, caught by this test,
-    /// and GREEN with it put back on `text(of:)`.
+    /// `--bucket` substring renamed outside comments, so only that doc
+    /// comment carries it: RED with this anchor on `commentFree(of:)`,
+    /// caught by this test, and GREEN with it put back on `text(of:)`.
+    ///
+    /// (Both of those sentences cited that occurrence by LINE NUMBER, as
+    /// `:241`, until 2026-11-08. It was at `:241` when they were written and
+    /// at `:248` when they were committed — the same commit's prose edit
+    /// above it moved it by seven lines, so the citation was stale at the
+    /// moment of committing. Ruling T10.15: not corrected, removed. CLAUDE.md
+    /// prefers the symbol to the line number, and a number invalidated by the
+    /// paragraph that states it is the clearest case there is.)
     ///
     /// **A residual the same probe found, left as it is.** This anchor is a
     /// SUBSTRING check, so `"--bucket-list"` satisfies it on its own: a tree

@@ -732,10 +732,20 @@ public enum ImportPreviewPlanner {
     /// behaviour.
     ///
     /// **The COMMAND LINE does the opposite with the same empty string, and
-    /// that is not a contradiction.** `SessionFieldOptions
+    /// that is not a contradiction.** `SessionFieldOptions` accepts
+    /// `--initial-path ""` and CLEARS the folder, where every other string
+    /// flag refuses a blank. Two places, not one:
+    /// `givenStringValues` leaves that flag out of the list
+    /// `validateGivenValues()` walks, which is what lets the blank through,
+    /// and `newSession(named:kind:)` and `edited(_:removingTags:)` each map a
+    /// blank to `nil`, which is what clears it.
+    ///
+    /// (Withdrawn wording, verbatim: "`SessionFieldOptions
     /// .validateGivenValues()` accepts `--initial-path ""` and CLEARS the
-    /// folder, where every other string flag refuses a blank. The two
-    /// channels differ in what an empty value is evidence OF: a value the
+    /// folder". That function does neither on its own: it only never sees the
+    /// flag, and it writes nothing.)
+    ///
+    /// The two channels differ in what an empty value is evidence OF: a value the
     /// person typed at a prompt is a statement, and the only way they could
     /// erase a folder from there; a value read out of another program's file
     /// may be the absence of one, and this function has no way to tell which

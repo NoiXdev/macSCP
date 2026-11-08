@@ -2249,11 +2249,15 @@ struct CLIMatrixWebDAVITests {
 /// `@Test` in the line above, and printed 19 for a suite of 18. Measured
 /// 2026-11-08, after the comment existed, which is the only moment it could
 /// have been caught. A `///` line cannot match `^struct`. (Escaping the brace
-/// for the regex also removed the bare substring from this file, so the old
-/// spelling now prints 18 here too and cannot be used to reproduce the 19 —
-/// which is why the number is written down.) The nine are
+/// for the regex removed THIS COMMENT's copy of that substring; the file
+/// still carries it once, at the declaration below. So the old spelling now
+/// opens its window on the declaration and prints 18 here too, and the 19
+/// cannot be reproduced from the current tree — which is why the number is
+/// written down. Withdrawn wording, verbatim: "Escaping the brace for the
+/// regex also removed the bare substring from this file". The consequence it
+/// drew was right and the claim about the file was not.) The nine are
 /// `listsThroughAPEMKeySession`, the four `start…` forwarding cases
-/// (`startDynamicForwardAnswersSOCKS`,
+/// (`startDynamicForwardAnswersSOCKS5Connect`,
 /// `startLocalForwardCarriesTheSshdBanner`,
 /// `startRemoteForwardIsReachableInsideTheContainer`,
 /// `startEndsWithExitZeroOnSIGINT`), its two host-key cases
@@ -2266,10 +2270,21 @@ struct CLIMatrixWebDAVITests {
 ///
 /// (Withdrawn wording, verbatim: "with the same cases in the same order as
 /// the three suites above". True of two of the three. The `awk` window above
-/// is deliberate rather than decorative: the same count taken with
-/// `grep -A 200` read **22** for SSH, because that suite is longer than the
-/// window and the truncation is silent — the kind of figure CLAUDE.md says
-/// to re-run rather than remember.)
+/// is deliberate rather than decorative: a first attempt used `grep -A 200`,
+/// whose window is shorter than SSH's suite, and the truncation is silent,
+/// so it produced a wrong figure. WHICH figure is deliberately not stated,
+/// here or in the quotation below: no command was recorded beside it, so
+/// nobody can tell what produced it, and a later attempt to reconstruct it
+/// did not reach the same number. Withdrawn wording, verbatim except for
+/// that one elision: "the same count taken with `grep -A 200` read
+/// **[figure elided under Ruling T10.14]** for SSH, because that suite is
+/// longer than the window and the truncation is silent — the kind of figure
+/// CLAUDE.md says to re-run rather than remember." It was precisely the kind
+/// of figure its own closing clause describes. The elision is the ruling and
+/// not an oversight — a withdrawal normally quotes verbatim, and this one
+/// does for every word except the number the ruling exists to retire; the
+/// parent commit still carries it for anyone who wants to see what could not
+/// be checked.)
 ///
 /// **None of these cases has ever run.** They are declared here, gated like
 /// their siblings, and the container they dial is FTP plan Task 11's work in
