@@ -207,15 +207,24 @@ public final class SettingsStore {
     /// descriptor's closure passes on what it was given rather than this
     /// constant.
     ///
-    /// Who still names it, counted with
-    /// `/usr/bin/grep -rno 'defaultMaxConcurrentTransfers' Sources | /usr/bin/grep -v Settings/SettingsStore.swift`
-    /// — 3 lines, exit 0: the command line
+    /// Who PASSES it, counted with
+    /// `/usr/bin/grep -rno 'transferSlots: SettingsStore.defaultMaxConcurrentTransfers' Sources | /usr/bin/grep -v Settings/SettingsStore.swift`
+    /// — **3** lines, exit 0: the command line
     /// (`MacSCPCLI/SessionConnecting.swift`, which reads no settings file at
     /// all) and the two diagnostic probes that open a connection
     /// (`DialProbes`, `ThroughputProbe`), whose pool size is not a quantity
     /// the user is choosing. Each says so where it passes it.
     /// `FTPProbe` is NOT in that list and needs nothing: it opens one
     /// `FTPControlConnection` and builds no pool.
+    ///
+    /// Two things about that command, both measured rather than assumed.
+    /// The exclusion is this file: the pattern is spelled here, so without
+    /// it the command counts its own text. And it matches the CALL-SITE
+    /// spelling rather than the bare name on purpose — the bare name,
+    /// `/usr/bin/grep -rno 'defaultMaxConcurrentTransfers' Sources | /usr/bin/grep -v Settings/SettingsStore.swift`,
+    /// prints **5**, because two of the five are sentences in
+    /// `BackendDescriptor.swift` that name the constant without passing it.
+    /// That 5 is what the first draft of this paragraph reported as 3.
     public static let defaultMaxConcurrentTransfers = Defaults.maxConcurrentTransfers
 
     /// Maximum concurrent transfers (clamped to 1...8, default 3).
