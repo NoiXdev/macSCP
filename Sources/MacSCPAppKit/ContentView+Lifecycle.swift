@@ -179,6 +179,26 @@ extension ContentView {
         // EVERY tab's queue (M8a/T3), the limit observers the shared limiter.
         // A change affects FUTURE slot assignments/items only — see the
         // properties' doc comments in `TransferQueueViewModel`.
+        //
+        // **The QUEUE is resized here and now; an FTP tab's POOL is not**, and
+        // the asymmetry is stated rather than implied (whole-branch review F4,
+        // Ruling W4). `BackendDescriptor.openConnection` reads the same setting
+        // per CONNECT ATTEMPT, so a connected tab keeps the pool it was built
+        // with — `makeTab`'s connector comment says so at the other end. Moving
+        // the slider from 3 to 8 on a connected FTP tab therefore lets the
+        // queue start eight transfers against a pool built for three, and the
+        // extra five park in `FTPConnectionPool.acquireTransfer`'s
+        // `waitForASlot()` while `TransferQueueViewModel` has already set
+        // `.running` — rows reading running with zero bytes and no error, which
+        // is the symptom spec §5b exists to prevent, reached through the one
+        // input §5b did not change. Making the two agree — the queue not
+        // exceeding the pool mid-session, or the pool resizing live — touches
+        // the transfer queue and is a `docs/BACKLOG.md` row ("The transfer
+        // queue is resized live and an FTP tab's pool only on the next
+        // connect"), not a change to make here. The other, server-driven route
+        // to the same disagreement — `FTPPoolBudget.slots`' never-decaying
+        // `421` shrink — is accepted by §5's own rule that the pool degrades
+        // rather than failing the queue, and is not a defect.
         .onChange(of: settingsStore.maxConcurrentTransfers) { _, newValue in
             for tab in tabsModel.tabs {
                 tab.transferQueue.maxConcurrent = newValue
@@ -341,6 +361,18 @@ extension ContentView {
                 // connected gets the new size on the next connect, not on
                 // the open one. The other three backends ignore it
                 // (`BackendDescriptor.openConnection`).
+                //
+                // **One setting, but the two numbers are NOT read at the same
+                // time, and that is a known disagreement rather than a
+                // symmetry** (whole-branch review F4, Ruling W4). The queue's
+                // copy is applied to every tab IMMEDIATELY, by the
+                // `.onChange(of: settingsStore.maxConcurrentTransfers)`
+                // observer in `lifecycleAndToolbar(_:)`, which carries the symptom and
+                // names the `docs/BACKLOG.md` row opened for making them
+                // agree. This read is the per-attempt one. So "one number"
+                // holds for the value and not for the moment it is read, and
+                // a reader who took the two reads for one would expect a
+                // resize that does not happen.
                 //
                 // Hop explicitly instead of reading `settingsStore` — which
                 // is `@MainActor` — as if this closure were already on that

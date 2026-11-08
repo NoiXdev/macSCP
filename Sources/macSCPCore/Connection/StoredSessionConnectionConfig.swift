@@ -195,14 +195,33 @@ public enum StoredSessionConnectionConfig {
         // UNENCRYPTED key. Its three other callers all ask it the lookup way.
         //
         // The schema's `isRequired` on the currently visible secret field
-        // answers all five configurations without a `kind` branch:
+        // answers all six configurations without a `kind` branch:
         //   ssh password   -> `password`, required     -> refuse
         //   ssh privateKey -> `passphrase`, optional   -> allow (unencrypted key)
         //   ssh agent      -> no secret field visible  -> allow
         //   s3             -> `secretAccessKey`, req.  -> refuse
         //   webdav         -> `password`, optional     -> allow (anonymous share)
+        //   ftp            -> `password`, optional     -> allow (anonymous FTP)
         //
-        // The last one CHANGED behaviour in M23/P2 and is deliberate: an
+        // (Withdrawn wording, verbatim: "answers all five configurations
+        // without a `kind` branch", followed by the first five rows only. The
+        // FTP backend made it six without touching this file, which is
+        // CLAUDE.md's rule about an enumeration in a comment being a claim
+        // about the rest of the project. The behaviour was right all along:
+        // `FTPFieldSchema.credential` marks NEITHER of its two fields
+        // required, with its own reason stated — "anonymous FTP is the oldest
+        // real deployment this protocol has" — and `ConnectionField.init`'s
+        // `isRequired` defaults to `false`, so the guard allows a secret-free
+        // FTP session exactly as it allows an anonymous WebDAV share. Counted
+        // in the same moment, from the repository root:
+        // `/usr/bin/grep -n 'isRequired: true' Sources/macSCPCore/FTP/FTPFieldSchema.swift`
+        // prints ONE line, exit 0, and it is the `host` field of
+        // `FTPFieldSchema.connection` — not the credential schema, which
+        // carries none. A first draft of this sentence used `grep -c` over
+        // every `*FieldSchema.swift` and claimed 0 for FTP; it prints 1, for
+        // that host field, and running it is what said so.)
+        //
+        // The WebDAV row CHANGED behaviour in M23/P2 and is deliberate: an
         // anonymous WebDAV share answers 200 with no `Authorization` header,
         // so the old refusal was a false negative on a configuration the
         // maintainer explicitly chose to support (see `WebDAVFieldSchema`'s

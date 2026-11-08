@@ -189,8 +189,25 @@ public enum FolderComparison {
     /// An object store answers from its ETag, which is always MD5, while the
     /// other side computes whatever the user chose — normally SHA-256. Every
     /// equal-size pair would therefore come back `.algorithmsDiffer`: honest,
-    /// and useless on one of the three backends. So a pair that lands there
-    /// is classified once more with `.md5` on BOTH sides.
+    /// and useless on one of the four remote backends. So a pair that lands
+    /// there is classified once more with `.md5` on BOTH sides.
+    ///
+    /// (Withdrawn wording, verbatim: "useless on one of the three backends."
+    /// There are four remote backends since the FTP one landed, in a file
+    /// that branch never touched. The substance is unaffected: FTP answers no
+    /// checksum at all — `ftpDescriptor`'s `supportsRemoteChecksum` is
+    /// `false` and `FTPFileSystem.remoteChecksum` returns
+    /// `.unavailableOnThisConnection` without a round trip — so no FTP pair
+    /// ever reaches this retry, and the one backend the sentence is about is
+    /// still S3. Only the cardinality was stale, which is CLAUDE.md's rule
+    /// about a number in a comment being a claim about the rest of the
+    /// project. Counted in the same moment, both re-run after this sentence
+    /// was written:
+    /// `/usr/bin/grep -c 'supportsRemoteChecksum: ' Sources/macSCPCore/Capabilities/BackendDescriptor.swift`
+    /// prints **4**, exit 0, one per remote backend, and
+    /// `/usr/bin/grep -c 'case ' Sources/macSCPCore/Connection/ConnectionKind.swift`
+    /// prints **4** as well. `grep -c` is the right tool for both because
+    /// each occurrence is on its own line.)
     ///
     /// Why the retry sits here and not inside the closures: the closures are
     /// deliberately lazy, because `state` calls them only when the sizes are

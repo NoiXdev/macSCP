@@ -29,18 +29,62 @@ public struct PermissionsTreeResult: Equatable, Sendable {
 /// Applies POSIX permissions across a directory subtree (M11c spec §1/§2):
 /// one value for everything, or a separate value for files vs. directories.
 /// Pure over `any RemoteFileSystem` — no protocol extension needed, so it
-/// works unmodified against both backends (Local/Citadel).
+/// works unmodified against the three backends that offer permissions at
+/// all: Local, Citadel and FTP. `PermissionsAvailability` reads
+/// `ProtocolCapabilities.permissionModel == .posixMode` and nothing else,
+/// this command prints the four backend descriptors' models, one per line
+/// — two `.posixMode` (ssh at `:492`, ftp at `:635`) against two `.none`
+/// (s3, webdav):
+///
+///     /usr/bin/grep -n "permissionModel: \." Sources/macSCPCore/Capabilities/BackendDescriptor.swift
+///
+/// `LocalFileSystem` is the third, under its own spelling — a `static let`
+/// rather than an initialiser argument, so the command above does not reach
+/// it and `/usr/bin/grep -n "permissionModel" Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`
+/// is what prints it.
+///
+/// (Withdrawn wording, verbatim: "so it works
+/// unmodified against both backends (Local/Citadel)." FTP became the third
+/// without this sentence knowing: `ftpDescriptor`'s `permissionModel` is
+/// `.posixMode`, so `PermissionsAvailability.isOffered(for:)` answers
+/// `true`; `FTPFileSystem` conforms to `PermissionEditingProbe` and
+/// `FTPSiteChmodMemory` answers `true` for a server with `SITE CHMOD`; and
+/// `RemoteBrowserViewModel` calls `apply` below.)
 ///
 /// SYMLINK SAFETY (security-critical, established in M7a): `setPermissions`
-/// FOLLOWS symlinks on both backends — there is no lchmod equivalent — so
+/// FOLLOWS symlinks on all three backends — there is no lchmod equivalent,
+/// and `SITE CHMOD` follows them on the servers that implement it — so
 /// calling it on a symlink would silently change permissions on a target
 /// OUTSIDE the tree. This walk therefore determines every entry's kind
-/// EXCLUSIVELY from `list()` (SSH_FXP_READDIR / directory enumeration —
-/// both report a symlink AS a symlink, never resolved), the exact guarantee
-/// `CitadelFileSystem.deleteTree` already rests its own symlink safety on
-/// (see its doc comments). A `.symlink` entry is counted in
-/// `skippedSymlinks` and is NEVER passed to `setPermissions` and NEVER
+/// EXCLUSIVELY from `list()` (SSH_FXP_READDIR / directory enumeration),
+/// the exact guarantee `CitadelFileSystem.deleteTree` already rests its own
+/// symlink safety on (see its doc comments). A `.symlink` entry is counted
+/// in `skippedSymlinks` and is NEVER passed to `setPermissions` and NEVER
 /// listed/descended into — regardless of what it points to.
+///
+/// **What "`list()` reports a symlink AS a symlink" rests on is NOT the
+/// same strength on all three, and the FTP half is UNMEASURED.** (Withdrawn
+/// wording, verbatim: "both report a symlink AS a symlink, never
+/// resolved".) For SFTP it is a protocol guarantee: `READDIR` reports the
+/// `lstat` type. For the local file system it is the enumerator's own.
+/// For FTP it is a parser reading a vocabulary nobody closed:
+/// `FTPListParser.mlsd` recognises exactly `case "os.unix=symlink"` and
+/// `case _ where lowered.hasPrefix("os.unix=slink")` and its `default:`
+/// maps every other `type` fact to `.other`, which this walk's
+/// `case .file, .other:` arm CHMODS. (`LIST`'s Unix dialect reads `l` at
+/// column 0 and is fine; `LIST` has no specified format at all, which is
+/// the parser's own stated reason for preferring `MLSD`.)
+///
+/// So this premise now depends on a question nobody has asked a real
+/// server: whether any of them spells a symlink's `MLSD` `type` fact a
+/// third way. The whole-branch review read both code paths and said
+/// explicitly that it did NOT measure that — it needs a server, and
+/// nothing gated ran. The answer is owed by Task 11, which builds the rig
+/// that first makes a real server available to ask, and it is recorded as a
+/// `docs/BACKLOG.md` row ("An FTP server's MLSD symlink spelling is
+/// unmeasured"). Until then: nothing is excluded from this walk and the
+/// parser is not widened, because both would be changes made on a
+/// hypothesis.
 ///
 /// The root's kind is supplied by the CALLER (the browser already has it
 /// from its own listing) rather than re-derived here via a stat probe.
