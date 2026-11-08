@@ -188,11 +188,36 @@ public final class SettingsStore {
     /// store instance.
     ///
     /// It exists for the callers that pass `transferSlots:` to
+    /// `BackendDescriptor.openConnection` with no store instance in hand:
+    /// a binary that by standing decision reads no settings file, and two
+    /// `@Sendable` diagnostic probe closures whose pool size is nothing the
+    /// user is choosing. Each reads the SAME constant the accessor below
+    /// reads, so the number has one spelling; a literal `3` at any of those
+    /// call sites would be a second copy of it.
+    ///
+    /// Withdrawn wording, verbatim, because it named the wrong obstacle:
+    /// "It exists for the callers that pass `transferSlots:` to
     /// `BackendDescriptor.openConnection` and cannot reach a `SettingsStore`
     /// — the store is `@MainActor`, and these are either a binary that reads
-    /// no settings file or a `@Sendable` probe closure. Each reads the SAME
-    /// constant the accessor below reads, so the number has one spelling; a
-    /// literal `3` at any of those call sites would be a second copy of it.
+    /// no settings file or a `@Sendable` probe closure." Being `@MainActor`
+    /// is not what puts a store out of those callers' reach — a hop crosses
+    /// that, as `ContentView+Lifecycle.swift` does — and this constant is
+    /// main-actor-isolated too, which the withdrawn sentence implied it was
+    /// not. Measured 2026-11-08 in an untracked probe, with
+    /// `defaultConnectTimeoutSeconds` as the control line in the same file
+    /// and the same shape, drawing nothing each time: a nonisolated
+    /// synchronous function, a nonisolated `async` function, and a
+    /// `@Sendable` closure RETURNING this constant were each refused with
+    /// `main actor-isolated static property 'defaultMaxConcurrentTransfers'
+    /// can not be referenced from a nonisolated context` (or, in the two
+    /// `async` cases, `… cannot be accessed from outside of the actor`).
+    /// What compiles — and what all three call sites happen to be — is the
+    /// read sitting in ARGUMENT position of an `await`ed `async` call, which
+    /// the same probe accepted in the same closure shape that it refused in
+    /// result position. So the constant is not a general-purpose escape
+    /// hatch from the actor, and it is not interchangeable with
+    /// `defaultConnectTimeoutSeconds`, which is declared `nonisolated` and
+    /// really is one.
     ///
     /// Withdrawn wording, verbatim, because the signature change it was
     /// waiting on has happened: "It exists for one caller:

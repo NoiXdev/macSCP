@@ -22,7 +22,10 @@ import Testing
 /// Same boundary as the project's other wiring guards (see
 /// `PaneVisibilityWiringGuardTests`'s doc comment): a SOURCE-TEXT scan, not
 /// a behavioral test. Fail-closed: an unreadable file, an unrecognized call
-/// shape, or an argument count other than 4 all count as failures.
+/// shape, or an argument count other than 5 all count as failures.
+/// (Withdrawn word, verbatim: "other than 4" — §5b's fifth argument made it
+/// stale, and `theConnectorClosureForwardsTheLiveConnectTimeout` below is
+/// where the 5 is actually asserted.)
 ///
 /// **It guards a second argument of the same call since spec §5b:
 /// `transferSlots:`, which sizes the FTP transfer pool and must be
@@ -43,12 +46,16 @@ import Testing
 /// would otherwise move the figure without a line of code changing. The
 /// wide form a first draft of this sentence used,
 /// `/usr/bin/grep -rno ConnectTimeoutAppWiringGuard --include='*.swift' --include='*.md' Sources Tests docs CLAUDE.md .superpowers`,
-/// printed 11 occurrences when that draft was written, and no figure is
-/// quoted for it here because it does not hold still: this paragraph, a
-/// `docs/BACKLOG.md` row and a task report each added to it while the
-/// sentence was being corrected, and the count rose twice between two
-/// runs of the same command. The figure that matters for a rename is
-/// files-to-edit, which is what the narrow form counts.
+/// **carries no figure here, and deliberately not**: prose moves it. It rose
+/// three times while this very paragraph was being written and corrected —
+/// each sentence about it, a `docs/BACKLOG.md` row and a task report all
+/// count as occurrences — so any number written beside it is stale before
+/// the commit lands. Withdrawn wording, verbatim: "printed 11 occurrences
+/// when that draft was written, and no figure is quoted for it here because
+/// it does not hold still" — which quoted a figure in the same sentence that
+/// said it quoted none, and the 11 was already three values out of date. The
+/// figure that matters for a rename is files-to-edit, which is what the
+/// narrow form counts.
 ///
 /// The remaining three arguments are counted, not read, and the count is
 /// here to catch the parser drifting rather than the code changing — the
