@@ -125,7 +125,24 @@ public final class FTPFileSystem: RemoteFileSystem {
         return RemoteFSError.connectionFailed(reason: failure.message)
     }
 
-    /// What a failure from a TRANSFER is reported as.
+    /// What a failure from a TRANSFER is reported as — and, since the
+    /// whole-branch review, what a failure from **every** operation of this
+    /// type is reported as.
+    ///
+    /// **The three readings below are the whole conversion; what was missing
+    /// was call sites.** The review measured the cost: this function was
+    /// installed on the dial (`connectFailure`) and on the transfer stream
+    /// (here, from `readStream` and `write`), and the operations either side
+    /// were left raw — so a control connection that died during
+    /// `TransferEngine.copyFile`'s `stat` of the source reached the queue as
+    /// an `FTPConnectionFailure`, which is not a `RemoteFSError`, which means
+    /// `TransferQueueViewModel`'s `catch let error as RemoteFSError where
+    /// error.isConnectionFailure` could not see it. Driven against the real
+    /// queue, SSH's `connectionFailed` came back `.interrupted` with the job
+    /// retained and FTP's `connectionClosed` came back `.failed` with nothing
+    /// retained: same place, same event, and only FTP dropped the job. Every
+    /// operation now reaches here through `converting(path:_:)`, and the lease
+    /// acquires reach `connectFailure` through `acquireTransfer()`.
     ///
     /// **This is classification, and the transfer queue is what reads it.**
     /// `TransferQueueViewModel`'s `catch let error as RemoteFSError where
@@ -149,6 +166,20 @@ public final class FTPFileSystem: RemoteFileSystem {
     ///    which call met it. On a `STOR` the missing thing is the parent
     ///    directory rather than `path`; the finding still names the path the
     ///    caller asked about, which is this project's rule for a payload.
+    ///    That claim was false of `list` until the whole-branch review's fix
+    ///    round, which is the second half of what the call sites above cost:
+    ///    one connection, three questions about one absent path, and `list`
+    ///    answered a raw `transferRefused(code: 550)` where `stat` and
+    ///    `deleteTree` answered `notFound`. `list` is the call that meets this
+    ///    `550` most often, because navigating into a folder somebody else
+    ///    removed is the ordinary way to produce it, and every caller that
+    ///    branches on `RemoteFSError.notFound` rather than rendering a
+    ///    sentence — `resolveConflictIfNeeded`, tree expansion,
+    ///    `FolderComparison`'s walk — saw a protocol error instead of a
+    ///    missing folder. `CitadelFileSystem.list` routes through
+    ///    `mapSFTPError`, whose `case .noSuchFile` answers `notFound`;
+    ///    `theSameAbsentPathIsNotFoundToListStatAndDeleteTree` is what holds
+    ///    the three answers together.
     /// 2. `leavesConnectionInStep == false` is a CONNECTION LOSS — the
     ///    failure cases where nothing established the stream's state, which
     ///    is `timedOut`, `connectionClosed`, `protocolViolation` and the
@@ -195,6 +226,57 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// client here makes of it, and `stat` and `delete` already made it.
     private static let fileUnavailable = 550
 
+    /// Runs one operation and gives whatever leaves it `transferFailure`'s
+    /// reading.
+    ///
+    /// **The edge, rather than the middle.** `transferFailure` says why these
+    /// three readings are the right ones; what this adds is that they are
+    /// applied where an operation ENDS, so the branch the queue needs is
+    /// reachable from every operation and not only from the transfer stream.
+    /// Each public method of this type is wrapped exactly once, including the
+    /// ones that call each other — the conversion is harmless on a value it
+    /// has already converted, because its first statement passes anything that
+    /// is not an `FTPConnectionFailure` straight through, and that is also
+    /// what keeps a `CancellationError` intact for the queue's own cancel
+    /// path.
+    ///
+    /// **What still leaves this type typed, deliberately**: the
+    /// answer-unusable readings — a `553`, a refused `PASV`, a refused `REST`.
+    /// Reading 3 of `transferFailure` is why, and Ruling T8.3 is what gave
+    /// `RemoteBrowserViewModel.message(for:path:)` and the queue's own cause
+    /// mapper the arms that read them. The connection-loss branch and the
+    /// `550` reading are the two this wrapper makes reachable.
+    private func converting<T>(
+        path: String, _ body: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await body()
+        } catch {
+            throw Self.transferFailure(error, path: path)
+        }
+    }
+
+    /// A transfer lease, with a failed acquire read as a DIAL.
+    ///
+    /// `connectFailure` rather than `transferFailure`, and the difference
+    /// matters: `pool.acquireTransfer()` dials (`FTPConnectionPool.reuseOrDial`),
+    /// so a certificate verdict, a refused greeting or an unreadable trust
+    /// store can arrive here — and every one of those is on the `true` side of
+    /// `leavesConnectionInStep`, so `transferFailure` would hand it back raw.
+    /// A failed acquire is a connection that did not open, or a pool that has
+    /// been shut down, which is exactly what `connectFailure` says: the
+    /// authentication reading keeps its identity and everything else becomes
+    /// `connectionFailed`, so the queue retains the job the way it does for
+    /// SSH. It sits OUTSIDE the `do` in both entry points because the lease
+    /// has to exist before there is anything to release.
+    private func acquireTransfer() async throws -> FTPTransferLease {
+        do {
+            return try await pool.acquireTransfer()
+        } catch {
+            throw Self.connectFailure(error)
+        }
+    }
+
     // MARK: - Listing
 
     /// One directory, through `MLSD` when the server advertises it and `LIST`
@@ -212,18 +294,20 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// round trip per listing.
     public func list(path: String) async throws -> [RemoteFileItem] {
         let directory = RemotePath.normalizedAbsolute(path)
-        let connection = try await pool.command()
-        let advertisesMLSD = await connection.features.contains("MLSD")
-        let lines = try await Self.listingLines(
-            of: directory, verb: advertisesMLSD ? "MLSD" : "LIST", on: connection)
-        do {
-            return advertisesMLSD
-                ? try FTPListParser.mlsd(lines, at: directory)
-                : try FTPListParser.list(lines, at: directory)
-        } catch FTPListRefusal.unreadableLine(let index) {
-            // `FTPListParser` counts from 0 and a person reads from 1. This
-            // is the one place that converts.
-            throw RemoteFSError.finding(.listingLineUnreadable(line: index + 1))
+        return try await converting(path: directory) {
+            let connection = try await pool.command()
+            let advertisesMLSD = await connection.features.contains("MLSD")
+            let lines = try await Self.listingLines(
+                of: directory, verb: advertisesMLSD ? "MLSD" : "LIST", on: connection)
+            do {
+                return advertisesMLSD
+                    ? try FTPListParser.mlsd(lines, at: directory)
+                    : try FTPListParser.list(lines, at: directory)
+            } catch FTPListRefusal.unreadableLine(let index) {
+                // `FTPListParser` counts from 0 and a person reads from 1.
+                // This is the one place that converts.
+                throw RemoteFSError.finding(.listingLineUnreadable(line: index + 1))
+            }
         }
     }
 
@@ -267,28 +351,43 @@ public final class FTPFileSystem: RemoteFileSystem {
     ///    the only thing that answers a directory, a symlink, the permission
     ///    bits and the owner, and it costs a data connection.
     ///
-    /// A path that step 3 does not find is `notFound`.
+    /// A path that step 3 does not find is `notFound` — and so is one whose
+    /// PARENT is not there either. The parent listing answers that case with
+    /// a `notFound` naming the parent (`list`, through `transferFailure`'s
+    /// `550` reading), and the path the caller asked about is the one it hears
+    /// about: `theSameAbsentPathIsNotFoundToListStatAndDeleteTree`'s fourth
+    /// question is that one.
     public func stat(path: String) async throws -> RemoteFileItem {
         let target = RemotePath.normalizedAbsolute(path)
         guard target != "/" else {
             return RemoteFileItem(name: "/", path: "/", kind: .directory)
         }
-        let connection = try await pool.command()
-        let features = await connection.features
-        if features.contains("SIZE"), let size = try await Self.size(of: target, on: connection) {
-            let modified = features.contains("MDTM")
-                ? try await Self.modificationTime(of: target, on: connection)
-                : nil
-            return RemoteFileItem(
-                name: (target as NSString).lastPathComponent, path: target, kind: .file,
-                size: size, modifiedAt: modified)
+        return try await converting(path: target) {
+            let connection = try await pool.command()
+            let features = await connection.features
+            if features.contains("SIZE"),
+                let size = try await Self.size(of: target, on: connection)
+            {
+                let modified = features.contains("MDTM")
+                    ? try await Self.modificationTime(of: target, on: connection)
+                    : nil
+                return RemoteFileItem(
+                    name: (target as NSString).lastPathComponent, path: target, kind: .file,
+                    size: size, modifiedAt: modified)
+            }
+            let parent = RemotePath.parent(of: target)
+            let name = (target as NSString).lastPathComponent
+            let siblings: [RemoteFileItem]
+            do {
+                siblings = try await list(path: parent)
+            } catch RemoteFSError.notFound {
+                throw RemoteFSError.notFound(path: target)
+            }
+            guard let entry = siblings.first(where: { $0.name == name }) else {
+                throw RemoteFSError.notFound(path: target)
+            }
+            return entry
         }
-        let parent = RemotePath.parent(of: target)
-        let name = (target as NSString).lastPathComponent
-        guard let entry = try await list(path: parent).first(where: { $0.name == name }) else {
-            throw RemoteFSError.notFound(path: target)
-        }
-        return entry
     }
 
     /// `SIZE`'s answer, or `nil` when the server refused it — which is what a
@@ -334,12 +433,13 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// It cannot `throw` before the stream exists in the way the other
     /// methods do: the lease has to be acquired first, and that waits for a
     /// slot. A failure to acquire one therefore throws from HERE, before any
-    /// stream is handed back.
+    /// stream is handed back — read as a dial, through `acquireTransfer()`,
+    /// because that is what a failed acquire is.
     public func readStream(
         path: String, fromOffset offset: UInt64
     ) async throws -> AsyncThrowingStream<Data, Error> {
         let target = RemotePath.normalizedAbsolute(path)
-        let lease = try await pool.acquireTransfer()
+        let lease = try await acquireTransfer()
         let inner = lease.readStream(target, startingAt: Int64(clamping: offset))
         // Wrapped so the terminal error gets the reading `transferFailure`
         // gives it — see there for why the queue cannot resume a download
@@ -380,7 +480,7 @@ public final class FTPFileSystem: RemoteFileSystem {
     ) async throws {
         guard mode == .overwrite else { throw RemoteFSError.finding(.resumeNotSupported) }
         let target = RemotePath.normalizedAbsolute(path)
-        let lease = try await pool.acquireTransfer()
+        let lease = try await acquireTransfer()
         do {
             try await lease.transferring("STOR", argument: target) { channel in
                 for try await chunk in contents {
@@ -436,15 +536,17 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// succeeds pays nothing for it.
     public func delete(path: String) async throws {
         let target = RemotePath.normalizedAbsolute(path)
-        let connection = try await pool.command()
-        let reply = try await connection.send("DELE", argument: target)
-        guard !reply.isPositiveCompletion else { return }
-        let entry = try? await stat(path: target)
-        guard let entry else { throw RemoteFSError.notFound(path: target) }
-        guard entry.kind != .directory else {
-            throw RemoteFSError.protocolError(reason: "path is a directory: \(target)")
+        try await converting(path: target) {
+            let connection = try await pool.command()
+            let reply = try await connection.send("DELE", argument: target)
+            guard !reply.isPositiveCompletion else { return }
+            let entry = try? await stat(path: target)
+            guard let entry else { throw RemoteFSError.notFound(path: target) }
+            guard entry.kind != .directory else {
+                throw RemoteFSError.protocolError(reason: "path is a directory: \(target)")
+            }
+            throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
         }
-        throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
     }
 
     /// `MKD`, idempotent as the contract requires.
@@ -455,14 +557,16 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// top-down, so parents always exist by the time this is called.
     public func createDirectory(at path: String) async throws {
         let target = RemotePath.normalizedAbsolute(path)
-        let connection = try await pool.command()
-        let reply = try await connection.send("MKD", argument: target)
-        guard !reply.isPositiveCompletion else { return }
-        guard let entry = try? await stat(path: target) else {
-            throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
-        }
-        guard entry.kind == .directory else {
-            throw RemoteFSError.finding(.pathExistsAndIsNotADirectory(path: target))
+        try await converting(path: target) {
+            let connection = try await pool.command()
+            let reply = try await connection.send("MKD", argument: target)
+            guard !reply.isPositiveCompletion else { return }
+            guard let entry = try? await stat(path: target) else {
+                throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
+            }
+            guard entry.kind == .directory else {
+                throw RemoteFSError.finding(.pathExistsAndIsNotADirectory(path: target))
+            }
         }
     }
 
@@ -477,23 +581,27 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// rename. Named rather than hidden; a check that closes the common case
     /// is worth one round trip, and the alternative is trusting a server
     /// behaviour that is not uniform.
+    /// `path:` on the conversion is the SOURCE, which is the path this
+    /// operation already reports a `notFound` about.
     public func rename(from: String, to: String) async throws {
         let source = RemotePath.normalizedAbsolute(from)
         let destination = RemotePath.normalizedAbsolute(to)
-        if (try? await stat(path: destination)) != nil {
-            throw RemoteFSError.finding(.directoryAlreadyExists)
-        }
-        let connection = try await pool.command()
-        let ready = try await connection.send("RNFR", argument: source)
-        guard ready.isIntermediate else {
-            guard (try? await stat(path: source)) != nil else {
-                throw RemoteFSError.notFound(path: source)
+        try await converting(path: source) {
+            if (try? await stat(path: destination)) != nil {
+                throw RemoteFSError.finding(.directoryAlreadyExists)
             }
-            throw RemoteFSError.finding(.unexpectedStatus(code: ready.code))
-        }
-        let done = try await connection.send("RNTO", argument: destination)
-        guard done.isPositiveCompletion else {
-            throw RemoteFSError.finding(.unexpectedStatus(code: done.code))
+            let connection = try await pool.command()
+            let ready = try await connection.send("RNFR", argument: source)
+            guard ready.isIntermediate else {
+                guard (try? await stat(path: source)) != nil else {
+                    throw RemoteFSError.notFound(path: source)
+                }
+                throw RemoteFSError.finding(.unexpectedStatus(code: ready.code))
+            }
+            let done = try await connection.send("RNTO", argument: destination)
+            guard done.isPositiveCompletion else {
+                throw RemoteFSError.finding(.unexpectedStatus(code: done.code))
+            }
         }
     }
 
@@ -520,13 +628,15 @@ public final class FTPFileSystem: RemoteFileSystem {
     public func setPermissions(path: String, permissions: UInt32) async throws {
         let target = RemotePath.normalizedAbsolute(path)
         let mode = String(permissions & 0o7777, radix: 8)
-        let connection = try await pool.command()
-        let reply = try await connection.send("SITE", argument: "CHMOD \(mode) \(target)")
-        guard !reply.isPositiveCompletion else { return }
-        switch reply.code {
-        case 500, 501, 502, 504: throw RemoteFSError.finding(.operationNotSupported)
-        case 550: throw RemoteFSError.permissionDenied(path: target)
-        default: throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
+        try await converting(path: target) {
+            let connection = try await pool.command()
+            let reply = try await connection.send("SITE", argument: "CHMOD \(mode) \(target)")
+            guard !reply.isPositiveCompletion else { return }
+            switch reply.code {
+            case 500, 501, 502, 504: throw RemoteFSError.finding(.operationNotSupported)
+            case 550: throw RemoteFSError.permissionDenied(path: target)
+            default: throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
+            }
         }
     }
 
@@ -543,24 +653,26 @@ public final class FTPFileSystem: RemoteFileSystem {
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
         let target = RemotePath.normalizedAbsolute(path)
-        let entry = try await stat(path: target)
-        guard entry.kind == .directory else {
-            try await delete(path: target)
-            return
-        }
-        for child in try await list(path: target) {
-            try Task.checkCancellation()
-            if child.kind == .directory {
-                try await deleteTree(at: child.path)
-            } else {
-                try await delete(path: child.path)
+        try await converting(path: target) {
+            let entry = try await stat(path: target)
+            guard entry.kind == .directory else {
+                try await delete(path: target)
+                return
             }
+            for child in try await list(path: target) {
+                try Task.checkCancellation()
+                if child.kind == .directory {
+                    try await deleteTree(at: child.path)
+                } else {
+                    try await delete(path: child.path)
+                }
+            }
+            try Task.checkCancellation()
+            let connection = try await pool.command()
+            let reply = try await connection.send("RMD", argument: target)
+            guard !reply.isPositiveCompletion else { return }
+            throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
         }
-        try Task.checkCancellation()
-        let connection = try await pool.command()
-        let reply = try await connection.send("RMD", argument: target)
-        guard !reply.isPositiveCompletion else { return }
-        throw RemoteFSError.finding(.unexpectedStatus(code: reply.code))
     }
 
     // MARK: - The session
@@ -578,16 +690,22 @@ public final class FTPFileSystem: RemoteFileSystem {
         if let initialPath, !initialPath.trimmingCharacters(in: .whitespaces).isEmpty {
             return RemotePath.normalizedAbsolute(initialPath)
         }
-        let connection = try await pool.command()
-        let reply = try await connection.send("PWD", argument: nil)
-        guard reply.isPositiveCompletion, let text = reply.lines.first,
-            let quoted = Self.quotedPath(in: text)
-        else {
-            // The contract says callers fall back to `/`, and so does this:
-            // a session that cannot name its landing folder still browses.
-            return "/"
+        // `path:` on the conversion is `/`: this call asks about no path of
+        // the caller's, and `PWD`'s own refusal is the fallback below rather
+        // than a throw, so the `550` arm is unreachable from here.
+        return try await converting(path: "/") {
+            let connection = try await pool.command()
+            let reply = try await connection.send("PWD", argument: nil)
+            guard reply.isPositiveCompletion, let text = reply.lines.first,
+                let quoted = Self.quotedPath(in: text)
+            else {
+                // The contract says callers fall back to `/`, and so does
+                // this: a session that cannot name its landing folder still
+                // browses.
+                return "/"
+            }
+            return RemotePath.normalizedAbsolute(quoted)
         }
-        return RemotePath.normalizedAbsolute(quoted)
     }
 
     /// The path between the FIRST quote and the LAST one, with doubled quotes

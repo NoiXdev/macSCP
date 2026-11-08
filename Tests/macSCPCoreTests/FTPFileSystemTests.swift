@@ -22,8 +22,15 @@ import Testing
 struct FTPFileSystemTests {
     // MARK: - Helpers
 
+    /// Starts the server, runs `body` against it, and stops it on both exits.
+    ///
+    /// `isolation` defaults to the caller's actor (`#isolation`), the same
+    /// shape `pollUntil` uses and for the same reason: one case here drives
+    /// the main-actor `TransferQueueViewModel`, and without the inherited
+    /// isolation its closure cannot be handed to a nonisolated helper at all.
     private static func running<T: Sendable>(
         _ server: LoopbackFTPServer,
+        isolation: isolated (any Actor)? = #isolation,
         _ body: (_ host: String, _ port: Int) async throws -> T
     ) async throws -> T {
         let endpoint = try await server.start()
@@ -390,6 +397,119 @@ struct FTPFileSystemTests {
         if case .remote(let error) = refused { refusalReadsAsAConnectionFailure = error.isConnectionFailure }
         else { refusalReadsAsAConnectionFailure = true }
         #expect(refusalReadsAsAConnectionFailure == false)
+    }
+
+    /// **A connection lost OUTSIDE the transfer stream has to reach the same
+    /// resume path, and what this case asserts is the QUEUE'S OUTCOME rather
+    /// than an error's type.**
+    ///
+    /// The whole-branch review measured the defect this exists for against
+    /// the real `TransferQueueViewModel`, with the other backends as the
+    /// control: the `RemoteFSError.connectionFailed` SSH's `stat` produces
+    /// came back `.interrupted` with the job retained, and the raw
+    /// `FTPConnectionFailure` FTP's `stat` produced came back
+    /// `.failed(…)` with nothing retained. Same place, same event, and FTP
+    /// dropped the job.
+    ///
+    /// So this drives the real queue rather than calling the conversion:
+    /// `TransferEngine.copyFile` reads the source's metadata before it opens
+    /// any stream (`statWithEntityTag`, which falls through to `stat`), inside
+    /// the task the queue awaits — so a control connection that dies there is
+    /// a connection loss the queue never sees as one unless `stat` itself
+    /// converts. A case that asserted the error's case instead would be a
+    /// wiring test and would stay green for a backend that converted the type
+    /// and still lost the job.
+    ///
+    /// The fixture: `/pub` exists and `/pub/gone.txt` does not, so `stat` gets
+    /// no `SIZE` to read and falls through to listing the parent — a data
+    /// transfer, and the one thing `dropControlConnectionMidTransfer()` can
+    /// interrupt. `MockRemoteFileSystem` is the destination because the
+    /// retention branch needs a destination that answers
+    /// `supportsAppendResume == true`, which a local disk does and S3 does
+    /// not.
+    ///
+    /// Two assertions, and the second is the positive beside the first: the
+    /// status is `.interrupted`, and the queue says it HAS an interrupted item
+    /// — which is what the resume banner and `retryInterrupted` consult, and
+    /// which a queue that had set the status and dropped the job would answer
+    /// `false` to.
+    @MainActor
+    @Test func aConnectionLostDuringTheSourceStatLeavesTheJobRetainedForAResume() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/present.txt", contents: Data("x".utf8))
+
+        let settled = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port, slots: 1)
+            let queue = TransferQueueViewModel()
+            await server.dropControlConnectionMidTransfer()
+            queue.enqueue(
+                fileName: "gone.txt", direction: .download,
+                source: fs, sourcePath: "/pub/gone.txt",
+                destination: MockRemoteFileSystem(), destinationDirectory: "/ziel",
+                onCompleted: nil)
+            try await pollUntil("the queue to settle the job") {
+                queue.items.first?.status.isTerminal == true
+            }
+            // Both `Bool`s are computed HERE, not in the expectation: the
+            // status is not `Sendable`, and the project's rule about a value
+            // a macro operand would print wants the comparison made before
+            // the expectation anyway. `reading` is the status as text, for
+            // the failure message — it carries a catalogue sentence and no
+            // endpoint, credential or path of the server's.
+            let interrupted = queue.items.first?.status == .interrupted
+            let retained = queue.hasInterrupted
+            let reading = String(describing: queue.items.first?.status)
+            await fs.disconnect()
+            return (interrupted: interrupted, retained: retained, reading: reading)
+        }
+        #expect(settled.interrupted, "\(settled.reading)")
+        #expect(settled.retained)
+    }
+
+    // MARK: - The empty/missing distinction
+
+    /// **One absent path, three questions, one answer.**
+    ///
+    /// `list` used to be the odd one out: measured by the whole-branch review
+    /// on one connection, `stat` and `deleteTree` answered
+    /// `notFound(path: "/pub/nothing")` and `list` answered a raw
+    /// `FTPConnectionFailure.transferRefused(code: 550)`. That contradicted
+    /// `FTPFileSystem.transferFailure`'s own claim to have removed "the
+    /// inconsistency where the same `550` meant two things depending on which
+    /// call met it", it diverged from `CitadelFileSystem.list`, whose
+    /// `mapSFTPError` answers `notFound` for `.noSuchFile`, and it was
+    /// invisible to every caller that branches on `RemoteFSError.notFound`
+    /// rather than rendering a sentence — `resolveConflictIfNeeded`, tree
+    /// expansion and `FolderComparison`'s walk.
+    ///
+    /// The fourth question is the one `list`'s own mapping could have broken:
+    /// `stat` of a path whose PARENT is absent reaches the refusal through the
+    /// parent listing, and the path the caller asked about is the one it has
+    /// to hear about — not the parent's.
+    @Test func theSameAbsentPathIsNotFoundToListStatAndDeleteTree() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/present.txt", contents: Data("x".utf8))
+
+        let answers = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port, slots: 1)
+            let listed = await Self.outcome { _ = try await fs.list(path: "/pub/nothing") }
+            let stated = await Self.outcome { _ = try await fs.stat(path: "/pub/nothing") }
+            let deleted = await Self.outcome { try await fs.deleteTree(at: "/pub/nothing") }
+            let deeper = await Self.outcome { _ = try await fs.stat(path: "/pub/nothing/leaf.txt") }
+            // The positive beside the four absences: the directory that IS
+            // there still lists, so the four above are about the missing path
+            // and not about a backend that refuses every listing.
+            let present = await Self.outcome { _ = try await fs.list(path: "/pub") }
+            await fs.disconnect()
+            return (listed, stated, deleted, deeper, present)
+        }
+        #expect(answers.0 == .remote(.notFound(path: "/pub/nothing")))
+        #expect(answers.1 == .remote(.notFound(path: "/pub/nothing")))
+        #expect(answers.2 == .remote(.notFound(path: "/pub/nothing")))
+        #expect(answers.3 == .remote(.notFound(path: "/pub/nothing/leaf.txt")))
+        #expect(answers.4 == .ok)
     }
 
     /// The §5a release invariant survives the error mapping above.
