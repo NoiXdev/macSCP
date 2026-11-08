@@ -140,7 +140,31 @@ final class SessionTab: Identifiable {
     /// install: a write from here, or from anywhere else in the App layer,
     /// does not compile. See that type's doc comment for why the boundary is
     /// a file and what it does not cover.
-    let installation = SessionInstallation()
+    ///
+    /// **`private`, which is the second half of that boundary, and it was
+    /// measured.** The property on the slot was already unwritable from
+    /// outside `SessionInstallation.swift`; the SLOT was internal, so the
+    /// type's own internal members — `install(_:over:kind:)`, `clear()`,
+    /// `cancelPermissionProbe()` and the four field setters — could be called
+    /// from any file in the App target, which is half of the operation the
+    /// slot's own doc comment says no caller can take half of. Two one-line
+    /// plants in `ContentView.startSession`, each with the sanctioned
+    /// `tab.installSession(built, over: fs, kind: form.kind)` left PRESENT and
+    /// byte-identical inside a never-taken `if`, were GREEN against 162 tests
+    /// before this word: `tab.installation.install(built, over:
+    /// LocalFileSystem(), kind: .ssh)` put a session on the tab while asking
+    /// a connection it is not over, and `tab.installation.clear()` took one
+    /// off with `TabTeardown`'s `tab.clearSession()` untouched. With
+    /// `private` both are refused by the compiler at the plant's own line
+    /// (`'installation' is inaccessible due to 'private' protection level`),
+    /// and the cost is nothing: `/usr/bin/grep -rno '\.installation\b'
+    /// Sources Tests | wc -l` prints 1, and that one use is in this file.
+    ///
+    /// A legitimate cross-file use would get a named method on `SessionTab`
+    /// that forwards, the way `installSession`, `clearSession`,
+    /// `cancelPermissionProbe` and `attachBucketCaches` already do — never a
+    /// widened scan, and never `internal` again.
+    private let installation = SessionInstallation()
     /// This tab's session, read-only from here. Installed through
     /// `installSession(_:over:kind:)`, released through `clearSession()`,
     /// changed in place through `changeSession(_:)`.
