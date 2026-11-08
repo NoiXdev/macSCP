@@ -157,8 +157,26 @@ final class SessionTab: Identifiable {
     /// off with `TabTeardown`'s `tab.clearSession()` untouched. With
     /// `private` both are refused by the compiler at the plant's own line
     /// (`'installation' is inaccessible due to 'private' protection level`),
-    /// and the cost is nothing: `/usr/bin/grep -rno '\.installation\b'
-    /// Sources Tests | wc -l` prints 1, and that one use is in this file.
+    /// and the cost is nothing: the only use of this property from outside
+    /// the type's own members is in this same file, and it is
+    /// `checksumLedgerBinding(for:)`'s `self.installation.setChecksums(…)`.
+    ///
+    /// The command that says so, and the reason it is spelled as an ABSENCE
+    /// rather than as a count. Run from the repository root:
+    ///
+    ///     /usr/bin/grep -rno '\.installation\b' Sources Tests | /usr/bin/grep -v 'SessionTab.swift'
+    ///
+    /// prints nothing and exits 1 — no file but this one reaches the
+    /// property. The control that says the pattern can match at all is
+    /// `/usr/bin/grep -o '\.installation\b' <<< 'x.installation.y' | wc -l`,
+    /// which prints 1. A TOTAL for that pattern is deliberately not written
+    /// here: the fix round that added this word first wrote one, and the
+    /// figure was false by the time the paragraph stating it was finished,
+    /// because this comment quotes both plants and the command itself.
+    /// Classified per match rather than per line, every match outside the
+    /// one named above is prose. CLAUDE.md's third point under "A number
+    /// travels with the command that produced it", arriving inside the
+    /// sentence that cites it.
     ///
     /// A legitimate cross-file use would get a named method on `SessionTab`
     /// that forwards, the way `installSession`, `clearSession`,
