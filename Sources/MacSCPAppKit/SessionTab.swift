@@ -166,8 +166,20 @@ final class SessionTab: Identifiable {
     /// widened scan, and never `internal` again.
     private let installation = SessionInstallation()
     /// This tab's session, read-only from here. Installed through
-    /// `installSession(_:over:kind:)`, released through `clearSession()`,
-    /// changed in place through `changeSession(_:)`.
+    /// `installSession(_:over:kind:)`, released through `clearSession()`, and
+    /// changed one field at a time through the named setters on
+    /// `SessionInstallation` that `showsFiles`, `checksumLedgerBinding(for:)`
+    /// and `attachBucketCaches(objectLockStates:bucketVersioning:)` forward
+    /// to.
+    ///
+    /// (Withdrawn wording, verbatim: "changed in place through
+    /// `changeSession(_:)`." No such member has ever existed in this tree.
+    /// `change(_: (inout BrowserSession) -> Void)` was the general mutator
+    /// fix round 2 wrote, measured GREEN against a quiet install spelled
+    /// `changeSession { $0 = built }`, and withdrew for the four field
+    /// setters — and the withdrawal swept the type's own file without
+    /// sweeping this one, which forwards to it. The sentence that was left
+    /// here pointed the next contributor at the hole that round closed.)
     var session: BrowserSession? { installation.session }
     let transferQueue = TransferQueueViewModel()
     let conflictBridge = ConflictPromptBridge()
