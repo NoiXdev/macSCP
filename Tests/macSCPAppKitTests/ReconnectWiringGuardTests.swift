@@ -523,12 +523,29 @@ struct ReconnectWiringGuardTests {
     /// all is the first stage's own output, whose lines are the entries
     /// below.
     ///
+    /// (Withdrawn wording, verbatim: "The unfiltered count is deliberately
+    /// NOT stated here: it moves whenever this comment is edited, so writing
+    /// it down would commit a figure that the next sentence about it
+    /// falsifies. Only the filtered count is a figure about the code." Fix
+    /// round 3 replaced the first of those two sentences without quoting it
+    /// and fix round 4 is quoting it now. The second sentence survives
+    /// verbatim in the paragraph above, so nothing about it is withdrawn.
+    /// What changed is the claim: "not stated here" and "not maintained here
+    /// as a live figure, and it appears once below inside a verbatim
+    /// withdrawal" are different claims about the same figure, and the
+    /// second became true only because the withdrawal below quotes the
+    /// first. CLAUDE.md: a quote is owed whenever the meaning changes, and
+    /// it is verbatim — and this is the paragraph that documents that rule,
+    /// which is why getting it right here matters more than the sentence
+    /// does.)
+    ///
     /// (Withdrawn wording, verbatim: "nothing is dropped, and the figure
     /// comes back 22 — the entries plus this paragraph's own command line."
     /// The figure was right and still reproduces — fix round 3 re-ran the
     /// `-n` variant and got the same number. What was wrong is what it did to
-    /// the sentence a few lines below it, which said the unfiltered count is
-    /// deliberately not stated here while this paragraph stated it. That is
+    /// the sentence a few lines below it, which said, verbatim, "The
+    /// unfiltered count is deliberately NOT stated here" while this
+    /// paragraph stated it. That is
     /// the third point of CLAUDE.md's "A number travels with the command that
     /// produced it" — a sentence that falsifies itself by existing — and it
     /// was found by re-reading after writing, which is the only way it is

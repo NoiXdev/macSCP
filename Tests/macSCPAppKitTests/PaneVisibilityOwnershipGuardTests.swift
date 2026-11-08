@@ -127,8 +127,44 @@ struct PaneVisibilityOwnershipGuardTests {
     ///
     /// What replaces it is the same instrument `ReconnectWiringGuardTests`
     /// uses for a sanctioned site: a path, a line, a count and a reason. The
-    /// owning files are scanned like every other file; the two lines below are
-    /// the only ones their scan may produce.
+    /// owning files are scanned like every other file.
+    ///
+    /// (Withdrawn, verbatim: "the two lines below are the only ones their
+    /// scan may produce." The sentence is true, and a reader takes a
+    /// stronger claim from it than the instrument supports — which is the
+    /// half nobody supplies for themselves. What the instrument actually
+    /// says is stated in Ruling T8.19 below.)
+    ///
+    /// **Ruling T8.19: the allowance is keyed on TEXT, and text can be
+    /// transplanted. Stated, not closed.** An entry is a (path, normalized
+    /// line, count) triple and says nothing about which DECLARATION owns the
+    /// line, so the sanctioned text can be moved onto a genuine read of a
+    /// struct copy in the same file while the count still comes back 1. The
+    /// re-review of fix round 3 measured it, in `SessionTab.swift` alone and
+    /// in prose here rather than in code: the owning getter was respelled so
+    /// that the receiver of the property access became a closure argument —
+    /// which the scanner below does not flag, because that receiver's name
+    /// does not say "session" — and a new nested struct holding a stored
+    /// optional `BrowserSession` carried a computed property whose getter was
+    /// spelled byte-identically to the sanctioned line, so the count stayed
+    /// 1 and the negative check had nothing to flag. Filter
+    /// `PaneVisibilityOwnershipGuardTests`, control line
+    /// `── control: 5 test(s) ran, 0 pre-existing failures`: GREEN. Filter
+    /// `macSCPAppKitTests`, control line
+    /// `── control: 3170 test(s) ran, 0 pre-existing failures`: GREEN, 3170
+    /// tests and none of them noticed.
+    ///
+    /// Why it stays open, so the reasoning can be disagreed with rather than
+    /// guessed at. It is NARROWER than what it replaced, where both files
+    /// were exempt as wholes and any read in either was green, so it is a
+    /// residual of the new instrument and not a regression. It needs the
+    /// owning getter respelled in the same change — a deliberate edit to the
+    /// one line this allowance names, which
+    /// `everySanctionedShowsFilesReadStillExistsExactlyAsOftenAsDeclared`
+    /// puts in front of a reviewer. And the fix for a text-keyed allowance
+    /// being text-keyed is a structural boundary on `showsFiles` itself: a
+    /// design change outside Task 8, and not one worth making for a
+    /// pane-visibility read.
     private static let sanctionedReads: [SanctionedRead] = [
         SanctionedRead(
             file: "SessionTab.swift",
