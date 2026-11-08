@@ -1021,9 +1021,66 @@ struct ReconnectWiringGuardTests {
     /// `SessionTab.swift`. Every OTHER file is covered by the slot's own
     /// `private` and by the absence sweep the slot's doc comment carries,
     /// and this check does not try to tell a legitimate forwarder from an
-    /// illegitimate one by shape. Anything the allowance admits is admitted
-    /// deliberately, and the reason beside it is the answer to the next
-    /// contributor's "may I add one?".
+    /// illegitimate one by shape. What the allowance admits, it admits by
+    /// TEXT and by COUNT, which is less than deliberately — Ruling T8.22
+    /// below measures a tree this comparison accepts and nobody chose — and
+    /// the reason beside each entry is the answer to the next contributor's
+    /// "may I add one?".
+    ///
+    /// (Withdrawn, verbatim: "Anything the allowance admits is admitted
+    /// deliberately". It reads as a closed boundary and the instrument does
+    /// not support one: under Ruling T8.22 below the tally is equal, every
+    /// count is still 1, and a second release path exists that no reviewer
+    /// was asked about. The rest of that sentence stands.)
+    ///
+    /// **Ruling T8.22: this allowance is keyed on TEXT, and text can be
+    /// TRANSPLANTED. Stated, not closed.** It is Ruling T8.19's residual —
+    /// `PaneVisibilityOwnershipGuardTests`' `sanctionedReads`, on
+    /// `showsFiles` — in this allowance's clothing, and that it is the same
+    /// residual for the same reason is the point rather than a coincidence:
+    /// an entry is a (normalized line, count) pair and says nothing about
+    /// which DECLARATION owns the line. The re-review of fix round 4
+    /// measured it and fix round 5 re-ran it, in prose here rather than in
+    /// code because a shape spelled in this file invites copying: the body
+    /// of `clearSession()` was replaced by a call to a new internal method
+    /// on the same type, and the sanctioned clear line moved into that
+    /// method byte-identically — eleven keys, every count still 1, and
+    /// `clearSession()` behaving exactly as before. Filter
+    /// `macSCPAppKitTests`, control line
+    /// `── control: 3172 test(s) ran, 0 pre-existing failures`: GREEN, 3172
+    /// tests and none of them noticed. What the plant buys is a second
+    /// release path reached WITHOUT a second line spelled like the
+    /// sanctioned one: after it, any file in the App target can call that
+    /// new method and take a session off a tab outside
+    /// `TabTeardown.run(_:reason:)` — which is what the clear entry's own
+    /// reason below says a second line spelled that way would be.
+    ///
+    /// **The bound, measured at the same control, because a residual stated
+    /// without one reads as a wider hole than it is.** The same transplant
+    /// on the INSTALL line — a private forwarder carrying that line
+    /// byte-identically, with `installSession(_:over:kind:)` handing the
+    /// forwarder a locally built file system and a kind of its own choosing
+    /// — is RED at `── control: 3172 test(s) ran, 0 pre-existing failures`,
+    /// caught by `PermissionEditingRecordTests`'
+    /// `installingASessionAsksTheConnectionAndRecordsItsAnswer()`. A
+    /// behaviour check stands behind the install line, which is the half F8
+    /// exists for: a `BrowserSession` reaches a tab only through the call
+    /// that asks the connection. Nothing stands behind the clear line,
+    /// because moving it changes no behaviour at all — which is also why
+    /// this check is the only thing that could have seen it. So the
+    /// residual is the RELEASE half, and the install half is held
+    /// behaviourally rather than by this allowance's text.
+    ///
+    /// Why it stays open, so the reasoning can be disagreed with rather
+    /// than guessed at, and they are Ruling T8.19's three reasons: the fix
+    /// for a text-keyed allowance being text-keyed is a structural boundary
+    /// on the operation itself, a design change outside Task 8; the plant
+    /// needs the owning member edited in the same change, so it is a
+    /// deliberate second path in front of a reviewer and not an accident
+    /// anyone has; and the property F8 exists for is RED under the install
+    /// transplant above. CLAUDE.md's reading of this shape is the same one:
+    /// when a scan keeps buying one spelling and revealing another, the
+    /// property wants a structural boundary rather than another anchor.
     private static let sessionTabSlotUses: [SanctionedSlotUse] = [
         SanctionedSlotUse(
             code: "private let installation = SessionInstallation()",
