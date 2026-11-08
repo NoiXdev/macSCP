@@ -57,8 +57,14 @@ import macSCPCore
 ///
 /// So the declared surface of this type is pinned by a POSITIVE check:
 /// `ReconnectWiringGuardTests.sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere`
-/// asserts that the set of lines at this class's own brace depth is exactly
-/// the sanctioned set. It names nothing about a violation — a fourth anchor
+/// asserts that the set of lines at THIS FILE's declaring brace depths — 0
+/// and 1, where a type, an extension, a free function or a member of any of
+/// them has to live — is exactly the sanctioned set. Not the class body's
+/// depth, which is where that check started and which a plant walked past:
+/// `extension SessionInstallation { func zzInstallQuietly(…) { session =
+/// built } }`, in this file, was GREEN against 168 tests, because
+/// `private(set)` is file-scoped and an extension's body is not the class's.
+/// It names nothing about a violation — a fourth anchor
 /// is what bought three GREEN plants on this property — so there is no
 /// spelling to evade, and it requires something PRESENT, so it cannot go
 /// stale in silence. **Adding a member here is red, and so is removing
