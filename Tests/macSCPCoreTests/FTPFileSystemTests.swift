@@ -854,6 +854,58 @@ struct FTPFileSystemTests {
         #expect(refused == false)
     }
 
+    /// A probe that arrives after `disconnect()` opens no second connection
+    /// and sends no second login (Ruling T8.9 of the FTP plan, fix round 2).
+    ///
+    /// The race this is about is an App one: `SessionTab`'s permission probe
+    /// is started by the install and not awaited, so it can still be in
+    /// flight when a teardown runs — and the teardown's own `disconnect()`
+    /// stage is `FTPConnectionPool.shutdown()`. Measured before the fix:
+    /// `command()` had no `isShutDown` guard where `acquireTransfer()`, the
+    /// next function in the same file, has one. It found `commandConnection`
+    /// nil, because `shutdown()` nils it, and dialled — a full connect,
+    /// greeting, TLS where the mode has it, and a login with the password the
+    /// pool still holds — on a pool whose `shutdown()` had already run, so
+    /// nothing closed it. The answer was then dropped by the session guard in
+    /// `SessionInstallation.recordPermissionEditing`, which makes the whole
+    /// connection pure cost.
+    ///
+    /// It is the CLASS and not the one instance: any `list`/`stat` after a
+    /// disconnect reached the same hole.
+    ///
+    /// Every figure is read before the server is stopped — nothing here is
+    /// allowed to heal first — and the two counts are the ones the re-review
+    /// reported moving (control connections 1 -> 2, `USER` 1 -> 2).
+    @Test func aProbeAfterTheConnectionWasShutDownOpensNoSecondConnection() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let measured = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            let answeredWhileConnected = await fs.offersPermissionEditing()
+            let afterFirstProbe = await server.controlConnectionCount
+            await fs.disconnect()
+            let answeredAfterShutdown = await fs.offersPermissionEditing()
+            return (
+                answeredWhileConnected: answeredWhileConnected,
+                afterFirstProbe: afterFirstProbe,
+                answeredAfterShutdown: answeredAfterShutdown,
+                afterSecondProbe: await server.controlConnectionCount,
+                logins: await server.receivedCommands.filter { $0.verb == "USER" }.count
+            )
+        }
+        // The control: the probe really does answer over a live connection,
+        // so a `1` below is a count and not a probe that never ran.
+        #expect(measured.answeredWhileConnected)
+        #expect(measured.afterFirstProbe == 1)
+        // One connection, one login, after a probe that arrived too late.
+        #expect(measured.afterSecondProbe == 1)
+        #expect(measured.logins == 1)
+        // And it still answers, with the inconclusive `true` that
+        // `offersPermissionEditing` documents for "no connection, no answer"
+        // — the editor is not taken away by a probe that found nothing.
+        #expect(measured.answeredAfterShutdown)
+    }
+
     /// Signal 1: a server that lists its `SITE` subcommands in `FEAT` is
     /// believed, and `SITE HELP` is never sent.
     ///

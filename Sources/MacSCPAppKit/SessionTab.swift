@@ -343,10 +343,15 @@ final class SessionTab: Identifiable {
 
     /// The task asking this tab's connection whether it will take a
     /// permission change, started by `installSession(_:over:kind:)`. Kept so
-    /// a test can await it and a second install can cancel the first; not
-    /// observable state, and not owned by teardown (it ends when the
-    /// question is answered, and its write is refused for any session but
-    /// the one it was asked about).
+    /// a test can await it, so a second install can cancel the first, and so
+    /// `TabTeardown.run(_:reason:)` can cancel it; not observable state.
+    ///
+    /// Owned by teardown since fix round 2 of Task 8 (Ruling T8.9). This said
+    /// here that it was "not owned by teardown (it ends when the question is
+    /// answered, and its write is refused for any session but the one it was
+    /// asked about)", and both halves of that parenthesis are still true —
+    /// but they are about the WRITE, and the re-review measured the DIAL. See
+    /// `SessionInstallation.cancelPermissionProbe()`.
     var permissionProbe: Task<Void, Never>? { installation.permissionProbe }
 
     /// This tab's connection liveness (Task 4; fix round 1 moved it here
@@ -926,6 +931,17 @@ extension SessionTab {
         _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind
     ) {
         installation.install(built, over: fileSystem, kind: kind)
+    }
+
+    /// Cancels the permission probe without releasing the session.
+    ///
+    /// `TabTeardown.run(_:reason:)`'s own cancel, beside the three other
+    /// activities of the same shape it ends there and before the stage that
+    /// closes the connection. Synchronous, and awaits nothing. See
+    /// `SessionInstallation.cancelPermissionProbe()` for what a probe that
+    /// outlives the connection does.
+    func cancelPermissionProbe() {
+        installation.cancelPermissionProbe()
     }
 
     /// Releases this tab's session, and the permission probe with it.

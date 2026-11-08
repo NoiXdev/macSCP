@@ -155,6 +155,25 @@ enum TabTeardown {
             // Not a sweep in the app's quit either: quit runs each window's
             // close sequence and each of those ends here.
             tab.endComparisons()
+            // The permission probe is the fourth thing of that kind
+            // (Ruling T8.9 of the FTP plan, fix round 2), and it is here
+            // rather than lower down for the reason the paragraph above
+            // gives about a comparison: it runs on THIS session's
+            // connection, is not a transfer and is not in the queue, so
+            // `cancelAll` below does not reach it. What it does if it
+            // outlives the connection is worse than listing and hashing —
+            // it opens a new one, login included, on a pool whose
+            // `shutdown()` has already run. Measured against a loopback
+            // server: control connections 1 -> 2, two `USER` commands after
+            // `disconnect()`. See
+            // `SessionInstallation.cancelPermissionProbe()`. Not a stage:
+            // the cancel is synchronous and awaits nothing, like the three
+            // above it.
+            //
+            // `clearSession()` further down cancels it too, and that is not
+            // this line's job: by then `session.remote.disconnect()` has
+            // run, which is exactly the window the probe was dialling in.
+            tab.cancelPermissionProbe()
             // Called directly, NOT through `TeardownStage.runBounded` (see
             // this function's doc comment): a bound would put a suspension
             // point in front of the sweep, and the queue sweep running in

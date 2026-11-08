@@ -188,6 +188,18 @@ actor FTPConnectionPool {
     /// Reserved: it is not one of the transfer slots, and nothing takes it
     /// away. Listing, navigation, `SIZE`, rename, delete and `MKD` run here.
     func command() async throws -> FTPControlConnection {
+        // The same first statement `acquireTransfer()` below has, and for the
+        // same reason: after `shutdown()` this pool dials nothing. Without
+        // it, `commandConnection` is nil — `shutdown()` nils it — so a
+        // command arriving after a disconnect opened a FRESH connection,
+        // greeting, TLS where the mode has it, and a login with the password
+        // this pool still holds, which nothing then closed. It was reachable
+        // by any post-disconnect `list`/`stat`, and the case that measured it
+        // is an App one: `SessionTab`'s permission probe is started by the
+        // install and not awaited, so a teardown can race it into here
+        // (Ruling T8.9 of the FTP plan, fix round 2;
+        // `FTPFileSystemTests.aProbeAfterTheConnectionWasShutDownOpensNoSecondConnection`).
+        guard !isShutDown else { throw FTPConnectionFailure.connectionClosed }
         if let commandConnection { return commandConnection }
         let connection = try await dial()
         commandConnection = connection

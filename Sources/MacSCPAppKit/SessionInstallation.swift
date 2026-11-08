@@ -89,6 +89,27 @@ final class SessionInstallation {
         session?.permissionEditing = offered
     }
 
+    /// Cancels the probe without releasing the session.
+    ///
+    /// `TabTeardown.run(_:reason:)` calls this beside the three other
+    /// activities of the same shape it cancels, and BEFORE the stage that
+    /// closes the connection — which is the whole point of its position
+    /// there. A probe left running reaches `FTPConnectionPool.command()`
+    /// after that stage, finds no command connection because `shutdown()`
+    /// nils it, and dials: a full connect, greeting, TLS where the mode has
+    /// it, and a login with the password the pool still holds. The answer is
+    /// then dropped by `recordPermissionEditing`'s session guard, so the only
+    /// thing such a connection achieves is existing, and nothing closes it —
+    /// this project has no `deinit` cleanup, by invariant. Measured against a
+    /// loopback server by the re-review of fix round 1: control connections
+    /// 1 -> 2, and two `USER` commands after `disconnect()`.
+    ///
+    /// Synchronous: it raises the task's cancellation and waits for nothing,
+    /// like the three cancels it stands with.
+    func cancelPermissionProbe() {
+        permissionProbe?.cancel()
+    }
+
     /// Releases the session, and the probe with it.
     ///
     /// The named clear path `TabTeardown.run(_:reason:)` uses in place of the
