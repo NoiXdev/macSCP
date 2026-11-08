@@ -2256,13 +2256,32 @@ final class FTPTrustDecision: Sendable {
                     // What is lost is TOFU for this host — nothing was
                     // pinned, so the hard stop above can never fire for a
                     // substituted certificate here. Too quiet to leave to a
-                    // `try?`. The host is named `.public` so the line is
-                    // findable; the error's own text names the store's path
-                    // and with it the account name, so it stays `.private`.
+                    // `try?`.
+                    //
+                    // **The host and port are named, and both are
+                    // `.private`.** The line exists so a reader can tell
+                    // WHICH host lost its pin, which is why the two fields
+                    // are interpolated at all; what the whole-branch review's
+                    // Ruling W2 settled is the privacy level. The project's
+                    // rule is no host, port or endpoint in any log, the
+                    // unified log is readable outside this process, and "it
+                    // fires rarely" is a mitigation and not a reason — so
+                    // `.private` it is, which is also what WebDAV's and S3's
+                    // public fields already amount to, since neither carries
+                    // an endpoint at all. A reader with the right entitlement
+                    // still sees both; a reader without one sees that a pin
+                    // was lost. The error's own text names the store's path
+                    // and with it the account name, so it stays `.private`
+                    // for its own reason.
+                    //
+                    // Withdrawn wording, verbatim: "The host is named
+                    // `.public` so the line is findable; the error's own text
+                    // names the store's path and with it the account name, so
+                    // it stays `.private`."
                     Self.logger.error(
                         """
                         trusted-certificate store not writable; the accepted certificate for \
-                        \(self.host, privacy: .public):\(self.port, privacy: .public) was not \
+                        \(self.host, privacy: .private):\(self.port, privacy: .private) was not \
                         pinned and this host stays unpinned: \
                         \(error.localizedDescription, privacy: .private)
                         """)
