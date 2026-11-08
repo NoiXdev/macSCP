@@ -236,6 +236,64 @@ struct ImportFeedbackTextTests {
         #expect(externalImport.components(separatedBy: "\n").count == 1)
     }
 
+    // MARK: - Entries a newer macSCP wrote and this one cannot read
+
+    /// The line exists only when the decode skipped something — the shape
+    /// every other conditional line in `importResultText` follows.
+    ///
+    /// Line counts rather than wording, so this does not depend on the
+    /// localized text. The second half is the positive check for the
+    /// first: without it, a builder that never appended the line at all
+    /// would satisfy "no line when nothing was skipped".
+    @Test func theSkippedLineAppearsOnlyWhenTheDecodeSkippedSomething() {
+        let quiet = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: false,
+            encrypted: true)
+        let skipped = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: false,
+            encrypted: true, skippedKinds: ["smb"])
+
+        #expect(quiet.components(separatedBy: "\n").count == 1)
+        #expect(skipped.components(separatedBy: "\n").count == 2)
+        #expect(ImportFeedbackText.skippedKindsLine([]) == nil)
+        #expect(ImportFeedbackText.skippedKindsLine(["smb"]) != nil)
+    }
+
+    /// The measured edge: a raw kind name can be `""` — pinned by
+    /// `anEntryWhoseKindIsTheEmptyStringIsStillSkipped` in
+    /// `SessionExportCodecTests` — so this line is a COUNT and renders no
+    /// name at all.
+    ///
+    /// Resolved in the ambient process locale, which is the path the app
+    /// takes. The per-language forms are held by
+    /// `PluralCatalogTests.theSkippedKindsLineNamesACountInEveryLanguage`,
+    /// which pairs each catalogue with its own `Locale` — the only way a
+    /// Polish plural category can be exercised correctly (see that suite's
+    /// doc comment).
+    ///
+    /// The positive check in the same test: the line names its count, so a
+    /// lookup that fell back to the raw key or returned `""` fails here
+    /// rather than passing the three absence checks for free.
+    @Test func anEmptyRawKindNameIsReportedAsACountAndNeverAsAName() {
+        let empty = ImportFeedbackText.skippedKindsLine([""]) ?? ""
+        let named = ImportFeedbackText.skippedKindsLine(["smb", "afp"]) ?? ""
+
+        let emptyNamesItsCount = empty.contains("1")
+        #expect(emptyNamesItsCount)
+        let namedNamesItsCount = named.contains("2")
+        #expect(namedNamesItsCount)
+        // No bare pair of quotes, which is what rendering `""` as a name
+        // looks like, and no raw name either.
+        let printsEmptyQuotes = empty.contains("\"\"") || empty.contains("''")
+        #expect(printsEmptyQuotes == false)
+        let printsARawName = named.contains("smb") || named.contains("afp")
+        #expect(printsARawName == false)
+        // Not the raw key, which is what `L10n` falls back to when the
+        // catalogue is missing the entry.
+        let fellBackToTheKey = empty.contains("import.result.skippedKinds")
+        #expect(fellBackToTheKey == false)
+    }
+
     /// The file import is untouched by the new parameter: omitting it must
     /// produce byte-for-byte what it produced before, on a plan that
     /// exercises several of the conditional lines at once.

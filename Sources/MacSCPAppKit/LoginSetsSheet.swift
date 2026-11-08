@@ -735,15 +735,23 @@ struct LoginSetsSheet: BoundedView {
             let result = await sessionList.applyLoginSetImport(plan)
             importResultMessage = importResultText(
                 result, includesSecrets: pending.payload.includesSecrets,
-                encrypted: pending.wasEncrypted)
+                encrypted: pending.wasEncrypted,
+                // The sets the DECODE skipped, read off the payload: the
+                // planner never saw them.
+                skippedKinds: pending.payload.skippedKinds)
             showImportResultAlert = true
             selectedID = nil
             refreshMergeCandidate()
         }
     }
 
+    /// `skippedKinds` is `LoginSetExportPayload.skippedKinds`; the line it
+    /// produces is composed by `ImportFeedbackText.skippedKindsLine`, so
+    /// both import paths report a newer file's unreadable entries in the
+    /// same words.
     private func importResultText(
-        _ result: SessionListViewModel.LoginSetImportResult, includesSecrets: Bool, encrypted: Bool
+        _ result: SessionListViewModel.LoginSetImportResult, includesSecrets: Bool,
+        encrypted: Bool, skippedKinds: [String] = []
     ) -> String {
         var lines = [String(format: L10n.string(
             "logins.import.result %lld %lld %lld",
@@ -801,6 +809,12 @@ struct LoginSetsSheet: BoundedView {
             lines.append(String(format: L10n.string(
                 "import.result.storeFailures %lld", "Not saved due to an error: %lld"),
                 result.storeFailures))
+        }
+        // Sets a NEWER macSCP wrote and this one cannot read. The same
+        // line the session import shows, composed in one place so the two
+        // cannot drift apart.
+        if let skipped = ImportFeedbackText.skippedKindsLine(skippedKinds) {
+            lines.append(skipped)
         }
         if includesSecrets && !encrypted {
             lines.append(L10n.string(

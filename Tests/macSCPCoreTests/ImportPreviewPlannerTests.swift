@@ -421,6 +421,56 @@ struct ImportPreviewPlannerTests {
         #expect(keptTheFolder == true)
     }
 
+    /// An EMPTY or blank `Path` is silence too, not a statement that the
+    /// folder should be cleared.
+    ///
+    /// `CyberduckBookmarkSource` reads `dict["Path"] as? String`, so a
+    /// bookmark whose `Path` is present and empty arrives here as `""`
+    /// rather than as `nil` — and until 2026-11-08 the FTP arm of
+    /// `updateValues(of:kind:over:)` guarded on `bookmark.path == nil`, so
+    /// `""` cleared the folder on record and raised a change row about it.
+    /// Its SSH sibling guards on `trimmed(…).isEmpty`, and the two arms
+    /// therefore did opposite things with the same shape.
+    ///
+    /// Three silent shapes and one speaking one: absent, empty and
+    /// whitespace-only all keep the stored folder and report no row, while
+    /// a bookmark that names a different folder still changes it and still
+    /// says so. Without that last half an arm that returned early for every
+    /// `Path` would satisfy the first three.
+    @Test func anEmptyOrBlankPathIsSilenceTooAndKeepsTheStoredFolder() throws {
+        for path in [nil, "", "   "] as [String?] {
+            let stored = ftpStoredSession(initialPath: "/htdocs", importID: ftpBookmark().id)
+            let rows = ImportPreviewPlanner.preview(
+                [ftpBookmark(path: path)], against: [stored], switches: ImportSwitches())
+            let silent = rows.first?.status == .knownUnchanged(stored.id)
+            #expect(silent)
+
+            var ticked = rows
+            for index in ticked.indices { ticked[index].selected = true }
+            let updated: ExportedSession? = ImportPreviewPlanner.payload(
+                for: ticked, sessions: [stored], groups: [],
+                switches: ImportSwitches()).sessions.first
+            let keptTheFolder = updated.map { field(FTPField.initialPath, of: $0) == "/htdocs" }
+            #expect(keptTheFolder == true)
+        }
+
+        // The positive check: a `Path` that says something is still a
+        // statement, and the row still names the field it will change.
+        let stored = ftpStoredSession(initialPath: "/htdocs", importID: ftpBookmark().id)
+        let rows = ImportPreviewPlanner.preview(
+            [ftpBookmark(path: "/public")], against: [stored], switches: ImportSwitches())
+        let namesTheFolder = changeList(rows.first?.status ?? .new)?
+            .contains { $0.field == ImportPreviewPlanner.FieldKey.initialPath }
+        #expect(namesTheFolder == true)
+        var ticked = rows
+        for index in ticked.indices { ticked[index].selected = true }
+        let updated: ExportedSession? = ImportPreviewPlanner.payload(
+            for: ticked, sessions: [stored], groups: [],
+            switches: ImportSwitches()).sessions.first
+        let tookTheNewFolder = updated.map { field(FTPField.initialPath, of: $0) == "/public" }
+        #expect(tookTheNewFolder == true)
+    }
+
     // MARK: - Rows nothing can import
 
     /// The fixture protocol used to be `"ftp"`; it is `"smb"` since FTP

@@ -310,5 +310,23 @@
             <string>%lld nazwy z archiwum już istnieje w tym folderze. Istniejące pliki nie zostaną nadpisane.</string>
         </dict>
     </dict>
+    <key>import.result.skippedKinds %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Pominięto %lld wpis: ta wersja macSCP nie zna jego typu połączenia.</string>
+            <key>few</key>
+            <string>Pominięto %lld wpisy: ta wersja macSCP nie zna ich typu połączenia.</string>
+            <key>many</key>
+            <string>Pominięto %lld wpisów: ta wersja macSCP nie zna ich typu połączenia.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

@@ -27,6 +27,39 @@ enum ImportFeedbackText {
         var secretsNotRead: Int
     }
 
+    /// The one line an export file written by a NEWER macSCP has to
+    /// report: how many of its entries name a connection type this build
+    /// has no case for and therefore skipped.
+    ///
+    /// `nil` when there are none, which is every file any build up to this
+    /// one wrote — the same shape every other conditional line in
+    /// `importResultText` below follows, because a line reading "…: 0" on a
+    /// clean run reads as a report about something that went wrong.
+    ///
+    /// A COUNT, never the raw names, for two reasons. The first is the one
+    /// the rejected-entries line below already states: what a file says is
+    /// the file's text, not this app's, and an alert is not the place for
+    /// it. The second is measured — a raw kind name can be the EMPTY
+    /// STRING. `KindTolerantEntry` diverts an entry whose `kind` key is
+    /// present, reads as a string, and names no case of `ConnectionKind`,
+    /// and `""` satisfies all three, so `skippedKinds` can hold `""` —
+    /// pinned by `anEntryWhoseKindIsTheEmptyStringIsStillSkipped` in
+    /// `SessionExportCodecTests` and by
+    /// `anEmptyRawKindNameIsReportedAsACountAndNeverAsAName` in this
+    /// file's own suite. A sentence naming what it skipped would render
+    /// that as a bare pair of quotes in four languages.
+    ///
+    /// Both import paths call this: the session import through
+    /// `importResultText` below, and the login-set import from
+    /// `LoginSetsSheet.importResultText`, which assembles its own lines.
+    static func skippedKindsLine(_ skippedKinds: [String]) -> String? {
+        guard !skippedKinds.isEmpty else { return nil }
+        return String(format: L10n.string(
+            "import.result.skippedKinds %lld",
+            "%lld entries were skipped: this version of macSCP does not know their connection type."),
+            skippedKinds.count)
+    }
+
     /// Shared formatter for non-typed read/decode failures on the import
     /// path — single source for the message so the three call sites cannot
     /// drift apart (T3 review).
@@ -71,10 +104,14 @@ enum ImportFeedbackText {
     /// `external` is set only for an import read out of another program's
     /// bookmarks; it adds the update count and, when the user asked for
     /// secrets, the ones the keychain did not hand over.
+    /// `skippedKinds` is `SessionExportPayload.skippedKinds` — the raw kind
+    /// names the decode could not read — and is empty for an external
+    /// import, which has no file and therefore nothing to skip.
     static func importResultText(
         _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,
         includesSecrets: Bool, encrypted: Bool,
-        external: ExternalImportOutcome? = nil
+        external: ExternalImportOutcome? = nil,
+        skippedKinds: [String] = []
     ) -> String {
         var lines = [String(format: L10n.string(
             "import.result.body %lld %lld %lld",
@@ -135,6 +172,13 @@ enum ImportFeedbackText {
                 "import.result.liftedGroups %lld",
                 "Folders moved to the top level because the file's nesting was broken: %lld"),
                 plan.liftedGroups.count))
+        }
+        // Entries a NEWER macSCP wrote and this one cannot read. Before
+        // `KindTolerantEntry` the whole file was refused, loudly; a partial
+        // import that said nothing about the rest would be the worse of the
+        // two answers, which is why this line is not optional.
+        if let skipped = skippedKindsLine(skippedKinds) {
+            lines.append(skipped)
         }
         if includesSecrets && !encrypted && external == nil {
             lines.append(L10n.string(

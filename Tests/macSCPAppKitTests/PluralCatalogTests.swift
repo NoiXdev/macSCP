@@ -11,8 +11,22 @@ import Testing
 /// `tabs.closeOthers.incomingTransfers %lld`,
 /// `tunnel.state.activeWithFailures %lld` and `tunnel.state.degraded %lld`.
 /// The extract dialog (2026-10-09) added two more, `archive.extract.entries %lld`
-/// and `archive.extract.collisions %lld`, which makes seven; the list inside
+/// and `archive.extract.collisions %lld`, which made seven, and the
+/// skipped-entries line of a newer file's import (2026-11-08) added
+/// `import.result.skippedKinds %lld`, which makes EIGHT; the list inside
 /// `catalogKeys()` is the count to trust, not this sentence.
+///
+/// (Withdrawn wording, verbatim: "which makes seven". It was seven until
+/// 2026-11-08. Both figures from the same command, run from the repository
+/// root before and after the entry was added — it counts the opening line
+/// of each tuple in `catalogKeys()`, in both the one-line and the wrapped
+/// spelling, and `grep -c` is right here because each entry's opening
+/// really is one line:
+///
+///     /usr/bin/grep -c -e '^            ("' -e '^            ($' Tests/macSCPAppKitTests/PluralCatalogTests.swift
+///
+/// printing 7 before and 8 after. The twelve-space anchor is what keeps
+/// this prose from matching itself.)
 /// A sixth key, `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on
 /// its own (`activeTransfersKey`) because only its first argument is
 /// pluralized.
@@ -60,6 +74,10 @@ struct PluralCatalogTests {
             (
                 "archive.extract.collisions %lld",
                 "%lld names from this archive already exist here. Existing files are not overwritten."
+            ),
+            (
+                "import.result.skippedKinds %lld",
+                "%lld entries were skipped: this version of macSCP does not know their connection type."
             ),
         ]
     }
@@ -303,6 +321,41 @@ struct PluralCatalogTests {
         #expect(
             Self.wordingIgnoringDigits(one) != Self.wordingIgnoringDigits(two),
             "did not distinguish 1 from 2 tabs closing through L10n.string + String(format:): \(one)")
+    }
+
+    /// The skipped-entries line of an import from a file a NEWER macSCP
+    /// wrote, in each language and in each plural category that language
+    /// has. It is the one key here whose whole point is what it does NOT
+    /// print: a skipped entry's raw kind name can be the empty string
+    /// (`SessionExportCodecTests.anEntryWhoseKindIsTheEmptyStringIsStillSkipped`),
+    /// so the sentence reports a count and no name.
+    ///
+    /// Counts 1, 2 and 5 reach `one`, `few` and `many` under Polish's CLDR
+    /// rules and `one`/`other` under the other three, so every declared
+    /// category of every catalogue is resolved at least once here.
+    ///
+    /// The positive check beside the absence checks: each resolved form
+    /// names its count, so a catalogue missing the entry — which resolves
+    /// to the raw key — fails here instead of passing for free.
+    @Test(arguments: Self.languages)
+    func theSkippedKindsLineNamesACountInEveryLanguage(language: String) throws {
+        let key = "import.result.skippedKinds %lld"
+        let fallback =
+            "%lld entries were skipped: this version of macSCP does not know their connection type."
+        for count in [1, 2, 5] {
+            let form = try #require(Self.resolvedForm(
+                key: key, defaultValue: fallback, language: language, count: count))
+            let namesItsCount = form.contains("\(count)")
+            #expect(namesItsCount, "\(language)/\(count) does not name its count")
+            let isTheRawKey = form.contains(key)
+            #expect(isTheRawKey == false, "\(language)/\(count) resolved to the raw key")
+            // Nothing in this sentence can interpolate a name: if a
+            // translation ever grows a `%@`, this is where it is caught.
+            let carriesAStringPlaceholder = form.contains("%@")
+            #expect(carriesAStringPlaceholder == false, "\(language)/\(count) carries a %@")
+            let printsEmptyQuotes = form.contains("\"\"")
+            #expect(printsEmptyQuotes == false, "\(language)/\(count) renders an empty name")
+        }
     }
 
     /// Same structural backstop as `stringsdictDeclaresThePluralRuleType`,

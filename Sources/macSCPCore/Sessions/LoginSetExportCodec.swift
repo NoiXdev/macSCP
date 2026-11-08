@@ -30,9 +30,14 @@ public struct LoginSetExportPayload: Codable, Equatable, Sendable {
     }
 
     /// Explicit only so `sets` can be decoded through `KindTolerantEntry`
-    /// (declared beside `SessionExportPayload`, the senior of the two
-    /// envelope payloads). Every other key is read exactly as the
+    /// (declared in `KindTolerantEntry.swift`, beside neither envelope
+    /// payload because both use it). Every other key is read exactly as the
     /// synthesized decoder read it.
+    ///
+    /// (Withdrawn wording, verbatim: "(declared beside
+    /// `SessionExportPayload`, the senior of the two envelope payloads)". It
+    /// was declared there until 2026-11-08, when it moved to a file of its
+    /// own.)
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         includesSecrets = try container.decode(Bool.self, forKey: .includesSecrets)

@@ -284,10 +284,43 @@ struct ImportFromCyberduckGuardTests {
 
     /// Every key this feature shows, in all four catalogs — DERIVED, never
     /// listed: the `L10n.string` literals in the three files that produce
-    /// its text, the nine field names read off `ImportPreviewPlanner.
+    /// its text, the ten field names read off `ImportPreviewPlanner.
     /// FieldKey`, the source's own display-name key read off
     /// `CyberduckBookmarkSource`, and the menu entry's key read out of the
     /// menu file.
+    ///
+    /// (Withdrawn wording, verbatim: "the nine field names read off
+    /// `ImportPreviewPlanner.FieldKey`". It has been ten since
+    /// `FieldKey.initialPath` landed on 2026-11-08 — host, port, username,
+    /// keyPath, authKind, endpoint, bucket, initialPath, name, labels. The
+    /// figure is counted, from the repository root:
+    ///
+    ///     /usr/bin/grep -o 'public static let [a-zA-Z]* = prefix' Sources/macSCPCore/Sessions/ExternalImport/ImportPreviewPlanner.swift | wc -l
+    ///
+    /// printing 10, with the pattern control
+    /// `/usr/bin/grep -o 'public static let [a-zA-Z]* = prefix' <<< '    public static let host = prefix + x' | wc -l`
+    /// printing 1. The command searches another file, so this sentence
+    /// cannot change its own answer.
+    ///
+    /// Why this one survived the round that corrected its sibling — the
+    /// withdrawal quote in `fieldKeys`' own doc comment below, which says
+    /// the same thing about the same ten keys. From the repository root:
+    ///
+    ///     /usr/bin/grep -no 'nine' Tests/macSCPAppKitTests/ImportFromCyberduckGuardTests.swift
+    ///
+    /// printed exactly two matches before this paragraph existed, and the
+    /// second of them sat inside that sibling's quotation, where the old
+    /// figure is CORRECT and must stay. A sweep that classified per line,
+    /// or per file, read the file as already corrected. Classify per match.
+    ///
+    /// Re-run after this paragraph existed, the same command prints THREE,
+    /// and not one of the three is a live claim: the withdrawal quote
+    /// above, the pattern inside the command line above, and the sibling's
+    /// own quotation. The live figure in this block is the `ten` in its
+    /// first paragraph. The figure moves with the wording — a draft of this
+    /// very paragraph spelled the pattern a second time and made it four —
+    /// which is the whole reason the command is re-run after the sentence
+    /// exists.)
     @Test func everyStringThisFeatureShowsIsInAllFourCatalogs() throws {
         var keys = Set<String>()
         for file in [Self.sheetFile, Self.modelFile, Self.alertTextFile] {

@@ -41,8 +41,21 @@ public enum CyberduckSecretLookup: Sendable {
 /// bookmark it has a credential for: `kSecAttrServer` is the host,
 /// `kSecAttrAccount` the username (for S3, the access key), `kSecAttrPort`
 /// the port when the bookmark has one, and `kSecAttrProtocol` is
-/// `kSecAttrProtocolSSH` for an sftp bookmark or `kSecAttrProtocolHTTPS` for
-/// an S3 one.
+/// `kSecAttrProtocolSSH` for an sftp bookmark, `kSecAttrProtocolHTTPS` for
+/// an S3 one and `kSecAttrProtocolFTP` for an FTP one.
+///
+/// (Withdrawn wording, verbatim: "`kSecAttrProtocolSSH` for an sftp
+/// bookmark or `kSecAttrProtocolHTTPS` for an S3 one". It enumerated two
+/// where `keychainProtocolName(for:)` below has had three arms that name a
+/// constant since 2026-11-08. Counted in that same moment, from the
+/// repository root:
+///
+///     /usr/bin/grep -c 'return kSecAttrProtocol' Sources/macSCPCore/Sessions/ExternalImport/CyberduckSecretReader.swift
+///
+/// printing 3. `grep -c` and not `grep -o | wc -l` because each arm really
+/// is one line, which is the one case where counting lines is counting
+/// occurrences; the `return` in the pattern is what keeps this prose from
+/// matching itself.)
 ///
 /// macSCP never writes to these items, never caches what it reads outside
 /// the caller's own `SecretStore` slot, and reads only what one query
@@ -124,7 +137,13 @@ public struct CyberduckSecretReader: Sendable {
     /// to — kept `Sendable` so it can be captured across the queue
     /// boundary and turned back into the matching `CFString` constant only
     /// once already inside the closure that runs the query.
-    private static func keychainProtocolName(for protocolValue: ExternalProtocol) -> String? {
+    ///
+    /// Not `private`, so that `CyberduckSecretProtocolMappingTests` can pin
+    /// every arm of it without a keychain: a wrong attribute here makes the
+    /// query miss, the lookup report `.notFound`, and the user's password
+    /// quietly not be imported, which is the one failure mode in this file
+    /// that no ungated run could see.
+    static func keychainProtocolName(for protocolValue: ExternalProtocol) -> String? {
         switch protocolValue {
         case .sftp: return kSecAttrProtocolSSH as String
         case .s3: return kSecAttrProtocolHTTPS as String

@@ -160,7 +160,12 @@ extension ContentView {
                     // it as an update would be a number about a wish.
                     updated: plan.sessionsToImport.filter(\.replacesExisting).count,
                     secretsNotRead: notRead)
-            })
+            },
+            // The entries the DECODE skipped, read off the payload rather
+            // than off the plan: the planner never saw them, so a count
+            // taken there would always be zero. Empty for an external
+            // import, which has no file.
+            skippedKinds: pending.payload.skippedKinds)
         showImportResultAlert = true
     }
 

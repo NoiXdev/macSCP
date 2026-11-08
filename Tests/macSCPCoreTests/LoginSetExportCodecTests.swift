@@ -154,6 +154,54 @@ struct LoginSetExportCodecTests {
     private static let envelopePassword = "envelope-pw"
     private static let ftpSecret = "ftp-secret"
 
+    /// The password-carrying twin of the boundary case in
+    /// `SessionExportCodecTests`: a set refused for a reason that is NOT
+    /// its kind still refuses the whole document. Both codecs reach the same
+    /// `KindTolerantEntry` fallthrough, so both need the boundary pinned —
+    /// this is the half where a softened `try` would hand a caller a
+    /// partially read login-set file.
+    ///
+    /// Three shapes under a kind this build reads, and the well-formed
+    /// positive check beside them.
+    @Test func aSetMalformedForAReasonOtherThanItsKindStillVoidsTheDocument() throws {
+        // A required field missing: `username` is non-optional on
+        // `ExportedLoginSet` and has nothing to do with the kind.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try LoginSetExportCodec.decode(Self.oneSetFile(entry: """
+                {"id":"\(UUID().uuidString)","name":"keep","kind":"ssh","authKind":"password"}
+                """), password: nil)
+        }
+        // A required field of the wrong type.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try LoginSetExportCodec.decode(Self.oneSetFile(entry: """
+                {"id":"\(UUID().uuidString)","name":42,"kind":"ssh","username":"u",\
+                "authKind":"password"}
+                """), password: nil)
+        }
+        // Not an object, so no `kind` key is readable and there is nothing
+        // to skip.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try LoginSetExportCodec.decode(Self.oneSetFile(entry: "7"), password: nil)
+        }
+
+        // The positive check: the same file, nothing wrong with it.
+        let wellFormed = try LoginSetExportCodec.decode(Self.oneSetFile(entry: """
+            {"id":"\(UUID().uuidString)","name":"keep","kind":"ssh","username":"u",\
+            "authKind":"password"}
+            """), password: nil)
+        #expect(wellFormed.sets.map(\.name) == ["keep"])
+        #expect(wellFormed.skippedKinds.isEmpty)
+    }
+
+    /// Exactly one set, written out as the raw JSON given — bytes for the
+    /// same reason `twoSetFile` below is bytes.
+    private static func oneSetFile(entry: String) -> Data {
+        Data("""
+        {"format":"macscp-logins","version":1,"encrypted":false,\
+        "payload":{"includesSecrets":false,"includesKeyFiles":false,"sets":[\(entry)]}}
+        """.utf8)
+    }
+
     /// Two sets, the second one's `kind` as given. Built as bytes, because a
     /// kind this build has no case for cannot be encoded from here.
     private static func twoSetFile(secondKind: String) -> Data {

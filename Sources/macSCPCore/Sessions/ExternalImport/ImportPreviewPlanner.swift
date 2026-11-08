@@ -145,6 +145,12 @@ public struct PreviewRow: Sendable, Equatable, Identifiable {
 /// and no secret ever passes through it.
 public enum ImportPreviewPlanner {
 
+    /// Put where a stored endpoint's userinfo was, on a change row that
+    /// differs in nothing else. Language-neutral on purpose: the row's
+    /// frame is the App's (`import.cyberduck.change`), and a masked
+    /// credential reads the same in all four catalogues.
+    static let removedUserinfoMarker = "•••@"
+
     /// The catalog keys `FieldChange.field` carries. Core composes them; the
     /// App resolves them (Task 5).
     ///
@@ -166,13 +172,6 @@ public enum ImportPreviewPlanner {
     /// printing 10 and 8. The second pattern is the schema-spelled half: it
     /// matches a key composed from a `*Field` case and so excludes exactly
     /// `name` and `labels`, which are composed from string literals.)
-
-    /// Put where a stored endpoint's userinfo was, on a change row that
-    /// differs in nothing else. Language-neutral on purpose: the row's
-    /// frame is the App's (`import.cyberduck.change`), and a masked
-    /// credential reads the same in all four catalogues.
-    static let removedUserinfoMarker = "•••@"
-
     public enum FieldKey {
         private static let prefix = "import.field."
         public static let host = prefix + SSHField.host.rawValue
@@ -707,13 +706,30 @@ public enum ImportPreviewPlanner {
     /// unmodified — there the silence really does mean password.
     ///
     /// FTP has one field of the same shape and no auth field at all: a
-    /// bookmark with no `Path` says nothing about the starting folder, so an
-    /// update keeps the one on record. The reason it is written back
-    /// EXPLICITLY, rather than left to the merge in `updatedSession` (which
-    /// would keep it anyway, the key being absent), is
-    /// `changes(from:to:kind:switches:)`: it compares against what this
+    /// bookmark whose `Path` is absent, empty or blank says nothing about
+    /// the starting folder, so an update keeps the one on record. The reason
+    /// it is written back EXPLICITLY, rather than left to the merge in
+    /// `updatedSession` (which would keep it anyway, the key being absent),
+    /// is `changes(from:to:kind:switches:)`: it compares against what this
     /// function returns, and a bag missing the key reads as `""` there — so
     /// the row would promise to clear a folder the import then leaves alone.
+    ///
+    /// (Withdrawn wording, verbatim: "a bookmark with no `Path` says nothing
+    /// about the starting folder". It said less than the guard beside it now
+    /// does: the guard read `bookmark.path == nil` until 2026-11-08, and
+    /// `CyberduckBookmarkSource` reads `dict["Path"] as? String`, so a
+    /// present-but-empty `Path` arrived as `""` and CLEARED the folder on
+    /// record while raising a change row about it — the opposite of what the
+    /// SSH arm one case above does with an empty `Private Key File`. The
+    /// guard now trims, so all three shapes are silence.)
+    ///
+    /// WHAT CYBERDUCK ACTUALLY WRITES INTO `Path` FOR A BOOKMARK WITH NO
+    /// DEFAULT FOLDER IS UNMEASURED. No bookmark fixture in this repository
+    /// carries an empty or blank `Path`, and nothing here has observed
+    /// Cyberduck omitting the key, writing `""`, or writing `"/"`. The
+    /// choice above is therefore made on the import's own contract — absence
+    /// does not clobber — and not on a reading of the other program's
+    /// behaviour.
     private static func updateValues(
         of bookmark: ExternalBookmark, kind: BookmarkKind, over old: FieldValues
     ) -> FieldValues {
@@ -724,7 +740,7 @@ public enum ImportPreviewPlanner {
             values[SSHField.authKind] = old[SSHField.authKind]
             values[SSHField.keyPath] = old[SSHField.keyPath]
         case .ftp:
-            guard bookmark.path == nil else { return values }
+            guard trimmed(bookmark.path ?? "").isEmpty else { return values }
             values[FTPField.initialPath] = old[FTPField.initialPath]
         case .s3:
             // Every field S3 reads off a bookmark is one the bookmark always

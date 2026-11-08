@@ -183,3 +183,61 @@ struct CyberduckSecretReaderTests {
         return false
     }
 }
+
+/// The `kSecAttrProtocol` mapping, UNGATED — the only part of this reader
+/// that can be measured without a keychain, and the part whose failure mode
+/// is silent.
+///
+/// Why it is its own suite rather than a case in the one above: that suite
+/// is `.enabled(if:)` on `MACSCP_KEYCHAIN`, which nobody sets on CI, so a
+/// case added there would pin nothing in any ordinary run. A wrong
+/// `kSecAttrProtocol` makes `SecItemCopyMatching` miss, the lookup reports
+/// `.notFound`, the import reports success, and the credential is quietly
+/// absent — it reads to the user like the server's fault.
+///
+/// `keychainProtocolName(for:)` is `internal` for exactly this test;
+/// `@testable import` reaches `internal`, not `private`. Measured rather
+/// than recalled, on 2026-11-08: with the modifier left at
+/// `private static`, `swift build --build-tests` exits 1 and the compiler
+/// says, once per call site below,
+///
+///     error: 'keychainProtocolName' is inaccessible due to 'private' protection level
+///
+/// Seven call-site diagnostics, counted from the saved build log with
+///
+///     /usr/bin/grep -o 'CyberduckSecretReaderTests.swift:[0-9]*:[0-9]*: .*error' <log> | sort -u | wc -l
+///
+/// which prints 7. (The unsorted count is 14: the compiler prints each
+/// diagnostic twice, once as the message line and once inside the caret
+/// annotation under it.)
+@Suite("CyberduckSecretReader protocol mapping")
+struct CyberduckSecretProtocolMappingTests {
+    /// All four arms, each against Apple's own constant rather than against
+    /// a spelled-out string: the constant is the thing the query is built
+    /// from, so reading it here is reading the same symbol the production
+    /// code reads.
+    @Test func everyProtocolMapsToTheKeychainAttributeItsBookmarksAreStoredUnder() {
+        #expect(CyberduckSecretReader.keychainProtocolName(for: .sftp) == kSecAttrProtocolSSH as String)
+        #expect(CyberduckSecretReader.keychainProtocolName(for: .s3) == kSecAttrProtocolHTTPS as String)
+        #expect(CyberduckSecretReader.keychainProtocolName(for: .ftp) == kSecAttrProtocolFTP as String)
+        // The negative arm: no query is made at all for a protocol macSCP
+        // does not speak. The three above are the positive checks it needs
+        // — without them a mapper returning `nil` for everything, which
+        // would import no password at all, would satisfy this line.
+        #expect(CyberduckSecretReader.keychainProtocolName(for: .unsupported("smb")) == nil)
+    }
+
+    /// Structural, beside the three equalities above: a mapper that handed
+    /// the same attribute to every protocol would make two of the three
+    /// queries miss, and it would still satisfy an equality written against
+    /// a constant that had been aliased to another.
+    @Test func theThreeSupportedProtocolsMapToThreeDifferentAttributes() {
+        let names = [
+            CyberduckSecretReader.keychainProtocolName(for: .sftp),
+            CyberduckSecretReader.keychainProtocolName(for: .s3),
+            CyberduckSecretReader.keychainProtocolName(for: .ftp),
+        ].compactMap { $0 }
+        #expect(names.count == 3)
+        #expect(Set(names).count == 3)
+    }
+}

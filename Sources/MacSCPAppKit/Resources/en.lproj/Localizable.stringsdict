@@ -258,5 +258,21 @@
             <string>%lld names from this archive already exist here. Existing files are not overwritten.</string>
         </dict>
     </dict>
+    <key>import.result.skippedKinds %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld entry was skipped: this version of macSCP does not know its connection type.</string>
+            <key>other</key>
+            <string>%lld entries were skipped: this version of macSCP does not know their connection type.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

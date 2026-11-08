@@ -46,8 +46,24 @@ public struct ExternalBookmark: Sendable, Equatable, Identifiable {
     /// Path to a private key file, referenced (never copied); only sftp
     /// bookmarks carry one.
     public let keyPath: String?
-    /// The S3 bucket name; empty means bucket-list mode. `nil` for
-    /// non-S3 bookmarks.
+    /// Whatever the source's own `Path` key held. A `BookmarkSource` copies
+    /// it for EVERY protocol and interprets nothing — `nil` only when the
+    /// file has no `Path` key at all, or when the file could not be parsed.
+    ///
+    /// What READS it depends on the kind, because the key is the source's
+    /// and the meaning is the protocol's: `ImportPreviewPlanner` takes it as
+    /// the S3 bucket name on an `.s3` bookmark (empty means bucket-list
+    /// mode) and as the folder an FTP session opens in on an `.ftp` one.
+    /// Nothing reads it for `.sftp`.
+    ///
+    /// (Withdrawn wording, verbatim: "The S3 bucket name; empty means
+    /// bucket-list mode. `nil` for non-S3 bookmarks." Both sentences
+    /// stopped being true on 2026-11-08, when the planner's new FTP arm
+    /// began reading this field as the initial folder and
+    /// `CyberduckBookmarkSource` began handing it to an FTP bookmark from
+    /// the same `Path` key. The second sentence was never true of the
+    /// reader: that source has always written `dict["Path"]` into this
+    /// field for every protocol it translates.)
     public let path: String?
     public let labels: [String]
     /// The bookmark file's own name (e.g. `"11111111-....duck"`), kept

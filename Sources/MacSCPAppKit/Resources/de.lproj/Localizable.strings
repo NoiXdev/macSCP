@@ -845,6 +845,7 @@
 "import.result.passwordFailures %lld" = "Passwörter, die nicht gespeichert werden konnten: %lld";
 "import.result.storeFailures %lld" = "Wegen eines Fehlers nicht gespeichert: %lld";
 "import.result.rejected %lld" = "Wegen unvollständiger Angaben nicht importiert: %lld";
+"import.result.skippedKinds %lld" = "%lld Einträge wurden übersprungen: Diese macSCP-Version kennt ihren Verbindungstyp nicht.";
 "import.result.liftedGroups %lld" = "Ordner auf die oberste Ebene verschoben, weil die Verschachtelung der Datei beschädigt war: %lld";
 "import.result.plaintextNotice" = "Die Datei enthielt unverschlüsselte Passwörter.";
 "import.error.notExport" = "Keine macSCP-Sitzungsdatei.";

@@ -401,6 +401,26 @@ struct SessionExportCodecTests {
         #expect(payload.skippedKinds == ["smb"])
     }
 
+    /// A raw kind name can be the EMPTY STRING, and the skip path takes it.
+    /// `KindTolerantEntry` diverts an entry whose `kind` key is present,
+    /// reads as a `String`, and names no case of `ConnectionKind`; `""`
+    /// satisfies all three, so `skippedKinds` holds `""`.
+    ///
+    /// Written down because it constrains the App layer, not because it is
+    /// a choice this codec makes: anything that REPORTED what was skipped
+    /// by name would render this as a bare pair of quotes in four
+    /// languages, which is why `ImportFeedbackText.skippedKindsLine`
+    /// reports a count.
+    ///
+    /// The positive check beside it is the second half: the session that IS
+    /// readable survives, so a decoder that dropped everything would not
+    /// satisfy the first.
+    @Test func anEntryWhoseKindIsTheEmptyStringIsStillSkipped() throws {
+        let payload = try SessionExportCodec.decode(Self.twoSessionFile(secondKind: ""))
+        #expect(payload.skippedKinds == [""])
+        #expect(payload.sessions.map(\.name) == ["keep"])
+    }
+
     /// `skippedKinds` is a fact about the FILE that was read, so it must not
     /// be writable into one: a crafted export naming kinds it does not carry
     /// would otherwise report skips that never happened.
@@ -413,6 +433,63 @@ struct SessionExportCodecTests {
         #expect(json.contains("skippedKinds") == false)
         #expect(json.contains("smb") == false)
         #expect(try SessionExportCodec.decode(data).skippedKinds.isEmpty)
+    }
+
+    /// The tolerance's OTHER side, and the one line this task's change
+    /// rests on: an entry refused for a reason that is NOT its kind still
+    /// refuses the whole document. `KindTolerantEntry.init(from:)` ends in
+    /// `self = .readable(try Entry(from: decoder))`, which rethrows; soften
+    /// that `try` and a corrupt file becomes a silent partial import, which
+    /// is a worse answer than the wholesale refusal this task replaced.
+    ///
+    /// Three shapes, all under a kind this build DOES have a case for, so
+    /// none of them can be satisfied by the skip path: a required field
+    /// missing, a required field of the wrong type, and an entry that is
+    /// not an object at all.
+    ///
+    /// The fourth case is the positive check standing beside them — the
+    /// same file, well formed, decodes and carries its one session.
+    /// Without it a decoder that threw on everything would satisfy the
+    /// first three.
+    @Test func anEntryMalformedForAReasonOtherThanItsKindStillVoidsTheDocument() throws {
+        // A required field missing. `name` is non-optional on
+        // `ExportedSession`, and the kind is one this build reads.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try SessionExportCodec.decode(Self.oneSessionFile(entry: """
+                {"id":"\(UUID().uuidString)","kind":"ssh","fields":{"SSHField.host":"h"}}
+                """))
+        }
+        // A required field of the wrong type.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try SessionExportCodec.decode(Self.oneSessionFile(entry: """
+                {"id":"\(UUID().uuidString)","name":42,"kind":"ssh",\
+                "fields":{"SSHField.host":"h"}}
+                """))
+        }
+        // Not an object, so there is no `kind` key to read and no entry to
+        // skip — the element's own decoder refuses it, as it did before.
+        #expect(throws: SessionExportError.notAnExportFile) {
+            try SessionExportCodec.decode(Self.oneSessionFile(entry: "7"))
+        }
+
+        // The positive check: the same file, nothing wrong with it.
+        let wellFormed = try SessionExportCodec.decode(Self.oneSessionFile(entry: """
+            {"id":"\(UUID().uuidString)","name":"keep","kind":"ssh",\
+            "fields":{"SSHField.host":"h"}}
+            """))
+        #expect(wellFormed.sessions.map(\.name) == ["keep"])
+        #expect(wellFormed.skippedKinds.isEmpty)
+    }
+
+    /// One group and exactly one session, the session written out as the
+    /// raw JSON given. Bytes rather than an encoded payload for the same
+    /// reason `twoSessionFile` below is: the shapes under test cannot be
+    /// produced by encoding a `SessionExportPayload`.
+    private static func oneSessionFile(entry: String) -> Data {
+        Data("""
+        {"format":"macscp-sessions","version":2,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[{"id":"\(UUID().uuidString)","name":"Prod"}],"sessions":[\(entry)]}}
+        """.utf8)
     }
 
     /// Two sessions and one group, with the second session's `kind` as
