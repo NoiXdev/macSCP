@@ -467,6 +467,75 @@ struct FTPFileSystemTests {
         #expect(settled.retained)
     }
 
+    /// **The same property one edge further out: the LEASE ACQUIRE.**
+    ///
+    /// `pool.acquireTransfer()` sits OUTSIDE the `do` in both `readStream` and
+    /// `write`, because the lease has to exist before there is anything to
+    /// release, so it is the one edge the transfer wrap can never cover. The
+    /// case above does not reach it — it fails in the source `stat`, before any
+    /// stream is asked for — and the re-review measured the gap by reverting
+    /// `acquireTransfer()` to a bare `pool.acquireTransfer()`: 274 tests ran, 0
+    /// pre-existing failures, and the planted run came back GREEN. A fix
+    /// nothing fails for is one that regresses in silence, which this project
+    /// treats as a defect rather than a nit.
+    ///
+    /// **The fixture makes the stat succeed and the acquire fail, in that
+    /// order, with no clock in it.** The pool is built with one transfer slot
+    /// and that slot is taken directly, so the queue's own `readStream` parks
+    /// in `FTPConnectionPool.waitForASlot()` — `pool.waiterCount` is the seam
+    /// that says it really parked, which is the same reason
+    /// `FTPConnectionPoolTests.shutdownReleasesAWaiterRatherThanLeavingItParked`
+    /// reads it. `disconnect()` then releases that waiter, `acquireTransfer`
+    /// re-reads `guard !isShutDown` and throws `connectionClosed`, and the
+    /// throw happens at the acquire and nowhere else: the source `stat` has
+    /// already completed against a live connection, so a backend that
+    /// converted only its operations would still fail here.
+    ///
+    /// `connectFailure` rather than `transferFailure` is what the acquire
+    /// needs, and `acquireTransfer()`'s own comment says why; what this case
+    /// asserts is the consequence either reading has to produce — the queue
+    /// keeps the job for a resume.
+    @MainActor
+    @Test func aConnectionClosedAtTheLeaseAcquireLeavesTheJobRetainedForAResume() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/a.txt", contents: Data("payload".utf8))
+
+        let settled = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port, slots: 1)
+            // The only transfer slot, taken before the queue asks for it.
+            let held = try await fs.pool.acquireTransfer()
+            let queue = TransferQueueViewModel()
+            queue.enqueue(
+                fileName: "a.txt", direction: .download,
+                source: fs, sourcePath: "/pub/a.txt",
+                destination: MockRemoteFileSystem(), destinationDirectory: "/ziel",
+                onCompleted: nil)
+            try await pollUntil("the queue's download to park on the pool's only slot") {
+                await fs.pool.waiterCount == 1
+            }
+            // The positive beside the parking: the source `stat` really did
+            // run, on a live connection, so what fails below is the acquire.
+            let statted = await server.receivedCommands.contains {
+                $0.verb == "SIZE" && $0.argument == "/pub/a.txt"
+            }
+            await fs.disconnect()
+            try await pollUntil("the queue to settle the job") {
+                queue.items.first?.status.isTerminal == true
+            }
+            let interrupted = queue.items.first?.status == .interrupted
+            let retained = queue.hasInterrupted
+            let reading = String(describing: queue.items.first?.status)
+            await held.release(reusable: false)
+            return (
+                interrupted: interrupted, retained: retained, reading: reading, statted: statted
+            )
+        }
+        #expect(settled.statted)
+        #expect(settled.interrupted, "\(settled.reading)")
+        #expect(settled.retained)
+    }
+
     // MARK: - The empty/missing distinction
 
     /// **One absent path, three questions, one answer.**
