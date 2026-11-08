@@ -102,7 +102,10 @@ enum TabTeardown {
     /// bounds `disconnect()` by — `CitadelFileSystem.sftpCloseBoundSeconds`
     /// for SSH, nothing at all for WebDAV and S3, and NIOSSL's five-second
     /// `shutdownTimeout` for one FTPS connection, the pool's closes being
-    /// concurrent. (Withdrawn wording, verbatim: "within roughly
+    /// concurrent. That last figure is **read from NIOSSL's source and not
+    /// measured in production here**, where SSH's constant beside it is this
+    /// project's own; `FTPConnectionPool.shutdown()` carries the citation.
+    /// (Withdrawn wording, verbatim: "within roughly
     /// `2 × TeardownStage.boundSeconds + CitadelFileSystem
     /// .sftpCloseBoundSeconds`" — one backend's constant standing in for
     /// four.) `cancelAll` itself has no such ceiling: it

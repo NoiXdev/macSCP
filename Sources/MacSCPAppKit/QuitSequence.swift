@@ -173,8 +173,10 @@ enum QuitWatchdog {
     /// .shutdown()` closes them concurrently for exactly that reason, so the
     /// third bound is ONE of NIOSSL's five seconds again and the arithmetic
     /// above holds for all four backends. Two things that figure is not: it
-    /// is read from NIOSSL's source rather than measured here (it needs a
-    /// peer that stops answering `close_notify`), and plain FTP's close is a
+    /// is read from NIOSSL's source rather than measured in production (it
+    /// needs a peer that stops answering `close_notify`; the loopback fixture
+    /// can be made into one and `FTPConnectionPool.shutdown()` records what
+    /// was observed there), and plain FTP's close is a
     /// local TCP close that returns at once, so only the TLS case spends it.
     ///
     /// **Downward, from the user.** A window with several frozen tabs would

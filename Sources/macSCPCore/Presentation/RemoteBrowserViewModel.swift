@@ -1486,9 +1486,24 @@ public final class RemoteBrowserViewModel {
         case RemoteFSError.connectionFailed:
             return String(
                 format: CoreL10n.string("core.error.connectionLost %@"), DialSupport.reason(for: error))
-        // A raw FTP failure (Task 8 review): `FTPFileSystem` wraps only a
+        // A raw FTP failure (Task 8 review): the readings
+        // `FTPFileSystem.transferFailure` deliberately leaves typed arrive
+        // here as themselves — the answer-unusable ones, which is where a
+        // `553`, a refused `PASV` and a refused `REST` land. Every operation
+        // of that type is wrapped in those three readings, so what reaches
+        // this arm is chosen by the reading and not by which call produced it.
+        //
+        // (Withdrawn wording, verbatim: "`FTPFileSystem` wraps only a
         // transfer's, so a listing or a `stat` after the connection went away
-        // arrives as itself. The same frames the `RemoteFSError` arms above
+        // arrives as itself." Both halves are false since the whole-branch
+        // review's fix round: `converting(path:_:)` wraps every operation, and
+        // a connection that went away is exactly the reading that is now
+        // converted — a listing or a `stat` after one arrives as
+        // `RemoteFSError.connectionFailed` and is taken by the arm above this
+        // one. The arm is still reachable, so nothing here is dead; the reason
+        // was one round out of date.)
+        //
+        // The same frames the `RemoteFSError` arms above
         // use, filled with the failure's CATALOGUE sentence (the banner is
         // rendered, so it is the user's language; the log gets
         // `DialSupport.reason`'s fixed English from `load()`'s catch).

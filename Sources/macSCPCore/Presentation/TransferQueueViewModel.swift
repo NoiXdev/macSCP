@@ -1810,10 +1810,26 @@ public final class TransferQueueViewModel {
         case RemoteFSError.crossBucketRenameRefused:
             return .crossBucketRenameRefused
         // The third mapping of this shape (Task 8 review, finding 2). A raw
-        // `FTPConnectionFailure` reaches this switch from the lease acquire in
+        // `FTPConnectionFailure` reaches this switch from the readings
+        // `FTPFileSystem.transferFailure` deliberately does NOT convert — the
+        // answer-unusable ones, a `553`, a refused `PASV`, a refused `REST` —
+        // which arrive from a transfer and from every operation alike, because
+        // every operation of that type is wrapped in the same three readings.
+        // Without an arm they fell to the `default:` below and read as the
+        // bridged case index.
+        //
+        // (Withdrawn wording, verbatim: "A raw `FTPConnectionFailure` reaches
+        // this switch from the lease acquire in
         // `FTPFileSystem.readStream`/`write`, which sits outside the wrap that
-        // would have made it a `RemoteFSError`; without an arm it fell to the
-        // `default:` below and read as the bridged case index. Its sentence is
+        // would have made it a `RemoteFSError`". That route is CLOSED: the
+        // whole-branch review's fix round gave both acquires
+        // `FTPFileSystem.acquireTransfer()`, whose `connectFailure` leaves no
+        // `FTPConnectionFailure` intact. The arm is still reachable, by the
+        // reading named above, so nothing here is dead — only the reason was
+        // one round out of date, which is CLAUDE.md's "Comments that describe
+        // other code" arriving from the consumer end.)
+        //
+        // Its sentence is
         // the CATALOGUE `message`, in the user's language, because this status
         // is rendered; the fixed-English `logSentence` is the log's. A refused
         // login is `authenticationFailed`, as the dial mapper reads it.

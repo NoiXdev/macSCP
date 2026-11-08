@@ -390,7 +390,22 @@ actor FTPConnectionPool {
     /// prints as five lines (the two statements of this function being one
     /// place):
     ///
-    ///     /usr/bin/grep -n -e 'private var idle' -e 'idle\.popLast' -e 'idle\.append' -e 'let open = idle' -e 'idle = \[\]' Sources/macSCPCore/FTP/FTPConnectionPool.swift
+    ///     /usr/bin/grep -n -e '^    private var idle' -e '^        if let reused = idle\.popLast' -e '^            idle\.append' -e '^        let open = idle' -e '^        idle = \[\]' Sources/macSCPCore/FTP/FTPConnectionPool.swift
+    ///
+    /// **Every pattern is anchored at the line start, with the code's own
+    /// indentation, and that is not tidying.** Corrected 2026-11-08, Ruling
+    /// N2: the committed form carried the patterns unanchored and claimed five
+    /// lines, and it printed **six** — the sixth being the command line in
+    /// this very comment, which spells what it searches for. (Withdrawn
+    /// wording, verbatim: the same command line without the five `^` and
+    /// without the indentation in each pattern. It is not reproduced here in
+    /// full, because a verbatim copy would re-create the defect it is being
+    /// withdrawn for and move the figure again — Ruling T5b.6; what changed is
+    /// the anchoring and nothing else.) A doc comment that quotes the code it
+    /// describes is indistinguishable from that code to a scanner, which is
+    /// CLAUDE.md's "Source-scanning guards read comments too", and an anchored
+    /// pattern is the cheapest thing that tells them apart: a `///` line
+    /// cannot begin with four spaces and then `private var idle`.
     ///
     /// So one FTPS tab at the maximum setting
     /// holds nine. Serially that stage was up to nine five-second bounds —
@@ -406,14 +421,28 @@ actor FTPConnectionPool {
     /// `acquireTransfer()` refuse on `isShutDown`, and a lease released
     /// meanwhile closes its own connection.
     ///
-    /// **The five seconds is NOT measured here**, and the record says so
-    /// rather than implying it: reproducing it needs a peer that accepts the
-    /// connection and then stops answering `close_notify`, which the loopback
-    /// fixture cannot be made to do (its own NIOSSL handler answers on its
-    /// own event loop) and which nothing gated could be asked for in the
-    /// round that wrote this. The figure is read from the library's source,
-    /// cited above; what is measured is that this function still closes every
-    /// connection it held — `shutdownClosesEveryConnectionThePoolHeldAtOnce`.
+    /// **The five seconds in THIS comment is read from the library's source,
+    /// cited above, and not measured in production** — the label matters
+    /// because SSH's figure in the same argument
+    /// (`TeardownStage`, `5.002063 s / 5.304208 s / 5.333977 s`) was measured
+    /// against a frozen peer and this one was not.
+    ///
+    /// It HAS since been observed against the fixture, which is a different
+    /// claim and is why the label above still stands. (Withdrawn wording,
+    /// verbatim: "reproducing it needs a peer that accepts the connection and
+    /// then stops answering `close_notify`, which the loopback fixture cannot
+    /// be made to do (its own NIOSSL handler answers on its own event loop)".
+    /// The obstacle was named correctly and the conclusion was wrong: a
+    /// handler at the HEAD of the server's pipeline, before the TLS handlers,
+    /// drops the raw ciphertext a `close_notify` arrives as, so the server's
+    /// own handler never sees it — `LoopbackFTPServer.goDeaf()`.) With that,
+    /// `shutdownClosesTheConnectionsAtOnceRatherThanOneAfterAnother` spent
+    /// 5.070 s and 5.223 s on two runs closing three connections
+    /// concurrently, and it asserts neither figure: it asserts that all three
+    /// closes were in flight while none had finished, which is the property
+    /// this task group exists for and the one a serial loop cannot produce.
+    /// `shutdownClosesEveryConnectionThePoolHeldAtOnce` is the other half,
+    /// that every connection is closed at all.
     func shutdown() async {
         isShutDown = true
         let open = idle + [commandConnection].compactMap { $0 }

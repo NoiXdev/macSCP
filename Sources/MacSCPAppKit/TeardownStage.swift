@@ -58,7 +58,9 @@ import os
 ///   FTPS carry no bound of this project's: `FTPFileSystem.disconnect()` is
 ///   `pool.shutdown()`, which ends in `channel.close().get()` per
 ///   connection, and what caps it is NIOSSL's default `shutdownTimeout` of
-///   five seconds — somebody else's number, and only for the TLS case; a
+///   five seconds — somebody else's number, **read from that library's source
+///   and not measured in production here**, unlike SSH's three figures two
+///   sentences above, and only for the TLS case; a
 ///   plain FTP close is a local TCP close and returns at once. A pool holds
 ///   up to `maxConcurrentTransfers + 1` connections, so this stage would be
 ///   that bound times the pool if the closes ran in series; they run

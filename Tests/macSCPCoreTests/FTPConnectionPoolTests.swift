@@ -611,17 +611,31 @@ struct FTPConnectionPoolTests {
     /// computed from. `FTPConnectionPool.shutdown()` says what bounds it and
     /// why the task group is there.
     ///
-    /// **What this case can measure and what it cannot.** It cannot measure
-    /// the five seconds: that needs a peer which accepts the connection and
-    /// then stops answering `close_notify`, and the loopback fixture's own
-    /// NIOSSL handler answers on its own event loop. Nor would a wall-clock
-    /// figure belong in an assertion (CLAUDE.md, "A wall-clock ceiling in a
-    /// test measures the runner"). What it measures is the property the group
-    /// could have broken and the serial loop could not: that no connection is
-    /// left open when the stage ends. The positive beside it is the count
-    /// before the shutdown — four live control channels, one command
+    /// **What this case measures is COMPLETENESS and not timing**: that no
+    /// connection is left open when the stage ends. The positive beside it is
+    /// the count before the shutdown — four live control channels, one command
     /// connection and three idle transfer connections — so the zero after it
     /// is about the closes and not about a pool that never opened anything.
+    /// Its own `addTask`-deletion plant is RED, so it measures that well.
+    ///
+    /// **It says nothing about WHEN, and this paragraph used to claim more.**
+    /// (Withdrawn wording, verbatim: "What it measures is the property the
+    /// group could have broken and the serial loop could not: that no
+    /// connection is left open when the stage ends." The re-review measured
+    /// the opposite — restoring the serial loop verbatim left this suite
+    /// GREEN, control 14 tests with 0 pre-existing failures.) The WHEN is
+    /// `shutdownClosesTheConnectionsAtOnceRatherThanOneAfterAnother`'s, below,
+    /// and a serial loop does turn that one red.
+    ///
+    /// (Withdrawn wording, verbatim: "It cannot measure the five seconds: that
+    /// needs a peer which accepts the connection and then stops answering
+    /// `close_notify`, and the loopback fixture's own NIOSSL handler answers
+    /// on its own event loop." The first clause is still true of THIS case,
+    /// which uses plain FTP and closes in milliseconds; the reason given for
+    /// it was wrong, and `LoopbackFTPServer.goDeaf()` is the peer that was
+    /// said to be impossible. A wall-clock figure still would not belong in an
+    /// assertion — CLAUDE.md, "A wall-clock ceiling in a test measures the
+    /// runner" — which is why the case below asserts a state instead.)
     @Test func shutdownClosesEveryConnectionThePoolHeldAtOnce() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)

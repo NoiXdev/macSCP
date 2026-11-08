@@ -556,6 +556,14 @@ struct FTPFileSystemTests {
     /// `stat` of a path whose PARENT is absent reaches the refusal through the
     /// parent listing, and the path the caller asked about is the one it has
     /// to hear about — not the parent's.
+    ///
+    /// **The EMPTY half of the distinction is here too**, added by Ruling W11
+    /// of the final fix round: a directory that exists and holds nothing lists
+    /// as `[]` and throws nothing. Measured as correct by the re-review and
+    /// held by nothing until now, which is the whole point of pairing it with
+    /// the missing half — "empty" and "missing" are the two answers this
+    /// section's own name promises, and a backend that mapped every listing to
+    /// `notFound` would satisfy the four absences above on its own.
     @Test func theSameAbsentPathIsNotFoundToListStatAndDeleteTree() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
@@ -571,14 +579,21 @@ struct FTPFileSystemTests {
             // there still lists, so the four above are about the missing path
             // and not about a backend that refuses every listing.
             let present = await Self.outcome { _ = try await fs.list(path: "/pub") }
+            // The empty half: a directory made through `MKD` and left alone.
+            try await fs.createDirectory(at: "/pub/empty")
+            let emptyOutcome = await Self.outcome { _ = try await fs.list(path: "/pub/empty") }
+            let emptyCount = (try? await fs.list(path: "/pub/empty"))?.count
             await fs.disconnect()
-            return (listed, stated, deleted, deeper, present)
+            return (listed, stated, deleted, deeper, present, emptyOutcome, emptyCount)
         }
         #expect(answers.0 == .remote(.notFound(path: "/pub/nothing")))
         #expect(answers.1 == .remote(.notFound(path: "/pub/nothing")))
         #expect(answers.2 == .remote(.notFound(path: "/pub/nothing")))
         #expect(answers.3 == .remote(.notFound(path: "/pub/nothing/leaf.txt")))
         #expect(answers.4 == .ok)
+        // Empty, not missing: the listing succeeds and carries nothing.
+        #expect(answers.5 == .ok)
+        #expect(answers.6 == 0)
     }
 
     /// The §5a release invariant survives the error mapping above.
