@@ -844,13 +844,43 @@ struct ReconnectWiringGuardTests {
     /// duplicate absorption on the set this replaced: a plant whose new
     /// member had two of its three depth-1 lines spelled BYTE-IDENTICALLY to
     /// sanctioned entries had both swallowed, and only its head line carried
-    /// the red. That was unreachable at the time — the file's depth-0/1
-    /// lines were 20 taken and 20 distinct, and a colliding head line is a
-    /// redeclaration — which made it a property with a shelf life rather
-    /// than a safe one: the day a line in this file appears twice at those
-    /// depths, deleting one copy becomes invisible. What the counts buy is
-    /// the removal of that shelf life, for the price of this literal
-    /// carrying a number.
+    /// the red. A set also makes the DELETION of one copy invisible on the
+    /// day a line in this file appears twice at those depths.
+    ///
+    /// **What the counts buy is a LIVE red, measured, and not only the
+    /// removal of a shelf life.** The re-review of fix round 4 planted a
+    /// SECOND import of Foundation at the top of this file — in prose here
+    /// rather than spelled out, for the reason the depth-2 plant above
+    /// gives. A duplicated import is a duplicated depth-0 line that is NOT
+    /// a redeclaration, so it compiles, and the tally then holds that line
+    /// twice against a literal below that states it once. Filter
+    /// `ReconnectWiringGuardTests`, control line
+    /// `── control: 44 test(s) ran, 0 pre-existing failures`: RED, caught
+    /// by `sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere()`.
+    /// The counterfactual control, which is what attributes that red to the
+    /// counts rather than to anything else about the plant: the same
+    /// duplicate with the comparison weakened back to a key-SET equality —
+    /// the set this replaced — at the same control line is GREEN, 44 tests
+    /// and none of them noticed. Both were re-run in fix round 5 before
+    /// this paragraph was written. The price of the counts is this literal
+    /// carrying a number per line.
+    ///
+    /// (Withdrawn, verbatim: "That was unreachable at the time — the file's
+    /// depth-0/1 lines were 20 taken and 20 distinct, and a colliding head
+    /// line is a redeclaration — which made it a property with a shelf life
+    /// rather than a safe one", and with it "What the counts buy is the
+    /// removal of that shelf life, for the price of this literal carrying a
+    /// number." The figure is right — 20 entries, 20 distinct keys, counts
+    /// summing to 20 — and what it was taken to imply is not: a duplicated
+    /// depth-0 line need not be a declaration at all, so "a colliding head
+    /// line is a redeclaration" does not make the absorption unreachable,
+    /// and the counts buy more than the removal of a shelf life. The commit
+    /// `test(app): the surface tally counts, and T8.17's residual is
+    /// measured` carries the same claim in its message, flatly — "No plant
+    /// can show that red today and this message does not claim one" — and
+    /// that message is left as committed, with fix round 5's own message
+    /// quoting the withdrawn sentence beside the plant that falsifies it.
+    /// This paragraph is the record.)
     private static let sessionInstallationSurface: [String: Int] = [
         "0: import Foundation": 1,
         "0: import Observation": 1,
