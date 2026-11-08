@@ -774,59 +774,113 @@ struct ReconnectWiringGuardTests {
     /// above already charges for a line, and a reviewer reads this file for
     /// exactly this question.
     ///
-    /// **What it does not cover, stated rather than implied:** a function
+    /// **What it does not cover, measured rather than argued:** a function
     /// nested inside an existing member's body (depth 2 or deeper) is not in
-    /// either set. Such a function is reachable only from inside the member
-    /// that declares it, so it cannot be called from `ContentView` or
-    /// `SessionTab`; what it could do is make an EXISTING sanctioned member
-    /// behave differently, which is a behaviour change `PermissionEditingRecordTests`
-    /// is the check for, not a new way in.
+    /// either set, and it CAN be reached from another file.
     ///
-    /// The list is compared, not spelled twice: the found set is READ from
-    /// the file and the declared set below is the only literal.
-    private static let sessionInstallationSurface: Set<String> = [
-        "0: import Foundation",
-        "0: import Observation",
-        "0: import macSCPCore",
-        "0: @MainActor",
-        "0: @Observable",
-        "0: final class SessionInstallation {",
-        "1: private(set) var session: BrowserSession?",
-        "1: @ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?",
-        "1: func install(",
-        "1: _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind",
-        "1: ) {",
-        "1: func recordPermissionEditing(",
-        "1: of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID",
-        "1: ) async {",
-        "1: func cancelPermissionProbe() {",
-        "1: func clear() {",
-        "1: func setShowsFiles(_ value: Bool) {",
-        "1: func setChecksums(_ ledger: ChecksumLedger, for side: BrowserPaneSide) {",
-        "1: func setObjectLockStates(_ cache: ObjectLockStateCache?) {",
-        "1: func setBucketVersioning(_ cache: BucketVersioningCache?) {",
+    /// (Withdrawn, verbatim: "Such a function is reachable only from inside
+    /// the member that declares it, so it cannot be called from
+    /// `ContentView` or `SessionTab`; what it could do is make an EXISTING
+    /// sanctioned member behave differently, which is a behaviour change
+    /// `PermissionEditingRecordTests` is the check for, not a new way in."
+    /// That is a claim about other code and the re-review of fix round 3
+    /// falsified it: the nested function's NAME is member-local, the
+    /// function itself is not, and it escapes through a global. The plant,
+    /// in prose rather than in code, because this comment is read by people
+    /// and a shape spelled here invites copying: a function declared inside
+    /// `SessionInstallation.install`'s body wrote the `session` property,
+    /// the same body assigned that function to a file-scope optional closure
+    /// variable declared in `ContentView.swift`, and `ContentView`'s
+    /// `startSession` called through that variable — with the sanctioned
+    /// `installSession` call left PRESENT and byte-identical, since it is
+    /// what arms the hook. Filter `macSCPAppKitTests`, control line
+    /// `── control: 3170 test(s) ran, 0 pre-existing failures`, measured at
+    /// `cd5392ef`: GREEN, 3170 tests and none of them noticed it, with this
+    /// file's depth-0/1 line set unchanged. A variant that armed the hook
+    /// from `clear()` and called `tab.clearSession()` was RED — but on the
+    /// added choke-point call, not on the escape.)
+    ///
+    /// The honest narrower statement, which is what this check does buy at
+    /// depths 0 and 1: a depth-2 declaration adds no new ENTRY POINT by
+    /// itself, so an escape has to be WRITTEN inside a sanctioned member's
+    /// body, where `PermissionEditingRecordTests` is the check that should
+    /// see it — and in the plant above it did not.
+    ///
+    /// **Ruling T8.18 leaves that residual OPEN** and amends Ruling T8.17,
+    /// which had accepted it on the ground now measured false. What changes
+    /// is that it is an open hole with a known reach instead of an
+    /// assumed-unreachable one. Closing it from this end means declaring
+    /// this file's declarations at EVERY depth, which couples the test to
+    /// the body of every method on the type and goes red for every ordinary
+    /// refactor. Closing it from the other end — no file-scope mutable
+    /// global in the App target — is a real project invariant (CLAUDE.md's
+    /// window-scope-and-not-a-singleton rule) and is tracked in
+    /// `docs/BACKLOG.md` rather than bought here: a second instrument to
+    /// close the second escape from the first is the epicycle CLAUDE.md
+    /// warns about under "mutation testing verifies a guard's sensitivity,
+    /// never its scope".
+    ///
+    /// The list is compared, not spelled twice: the found tally is READ from
+    /// the file and the declared tally below is the only literal.
+    ///
+    /// **Counts, not a set, since fix round 4.** The re-review measured
+    /// duplicate absorption on the set this replaced: a plant whose new
+    /// member had two of its three depth-1 lines spelled BYTE-IDENTICALLY to
+    /// sanctioned entries had both swallowed, and only its head line carried
+    /// the red. That was unreachable at the time — the file's depth-0/1
+    /// lines were 20 taken and 20 distinct, and a colliding head line is a
+    /// redeclaration — which made it a property with a shelf life rather
+    /// than a safe one: the day a line in this file appears twice at those
+    /// depths, deleting one copy becomes invisible. What the counts buy is
+    /// the removal of that shelf life, for the price of this literal
+    /// carrying a number.
+    private static let sessionInstallationSurface: [String: Int] = [
+        "0: import Foundation": 1,
+        "0: import Observation": 1,
+        "0: import macSCPCore": 1,
+        "0: @MainActor": 1,
+        "0: @Observable": 1,
+        "0: final class SessionInstallation {": 1,
+        "1: private(set) var session: BrowserSession?": 1,
+        "1: @ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?": 1,
+        "1: func install(": 1,
+        "1: _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind": 1,
+        "1: ) {": 1,
+        "1: func recordPermissionEditing(": 1,
+        "1: of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID": 1,
+        "1: ) async {": 1,
+        "1: func cancelPermissionProbe() {": 1,
+        "1: func clear() {": 1,
+        "1: func setShowsFiles(_ value: Bool) {": 1,
+        "1: func setChecksums(_ ledger: ChecksumLedger, for side: BrowserPaneSide) {": 1,
+        "1: func setObjectLockStates(_ cache: ObjectLockStateCache?) {": 1,
+        "1: func setBucketVersioning(_ cache: BucketVersioningCache?) {": 1,
     ]
 
     @Test func sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere() throws {
         let found = try Self.declaredSurface(
             ofFileAt: Self.file("Sources/MacSCPAppKit/SessionInstallation.swift"))
-        // The floor that says the walk read a file with a type in it, so a set
-        // equality cannot be satisfied by two empty sets after a move of the
-        // file or a change to the walk.
+        // The floor that says the walk read a file with a type in it, so a
+        // tally equality cannot be satisfied by two empty tallies after a
+        // move of the file or a change to the walk. `count` here is the
+        // number of DISTINCT lines, which is the figure the floor wants.
         #expect(found.count >= 10, """
-            only \(found.count) line(s) found at depth 0 or 1 of SessionInstallation.swift — \
-            the walk is not reading the file, and the comparison below is comparing nothing.
+            only \(found.count) distinct line(s) found at depth 0 or 1 of \
+            SessionInstallation.swift — the walk is not reading the file, and the \
+            comparison below is comparing nothing.
             """)
-        #expect(found.contains("0: final class SessionInstallation {"), """
+        #expect(found.keys.contains("0: final class SessionInstallation {"), """
             the walk no longer finds `final class SessionInstallation` at the file's top \
             level; whatever it is comparing, it is not this type's declared surface.
             """)
-        let added = found.subtracting(Self.sessionInstallationSurface).sorted()
-        let removed = Self.sessionInstallationSurface.subtracting(found).sorted()
+        let added = found.filter { Self.sessionInstallationSurface[$0.key] != $0.value }
+            .map { "\($0.key) ×\($0.value)" }.sorted()
+        let removed = Self.sessionInstallationSurface.filter { found[$0.key] != $0.value }
+            .map { "\($0.key) ×\($0.value)" }.sorted()
         #expect(found == Self.sessionInstallationSurface, """
             `SessionInstallation`'s declared surface has changed.
-            present but not sanctioned: \(added)
-            sanctioned but absent: \(removed)
+            found, with a count the allowance does not state: \(added)
+            sanctioned, with a count the file does not have: \(removed)
 
             This file is the ONE place a `BrowserSession` can be written onto a tab: its \
             `session` is `private(set)`, and a file is the narrowest access scope Swift \
@@ -2164,9 +2218,14 @@ struct ReconnectWiringGuardTests {
     /// and no indentation to defeat by writing it at the wrong one. A bare
     /// `}` is dropped — a type's closing brace starts its line at depth 1,
     /// and no declaration is spelled `}`.
-    private static func declaredSurface(ofFileAt file: URL) throws -> Set<String> {
+    ///
+    /// A TALLY and not a set: two lines spelled identically at the same
+    /// depth count twice, so deleting one of them is red. See
+    /// `sessionInstallationSurface`'s own paragraph for the plant that
+    /// measured a set absorbing them.
+    private static func declaredSurface(ofFileAt file: URL) throws -> [String: Int] {
         let source = try SourceCorpus.code(of: file)
-        var surface: Set<String> = []
+        var surface: [String: Int] = [:]
         var depth = 0
         var depthAtLineStart = 0
         var line = ""
@@ -2174,7 +2233,7 @@ struct ReconnectWiringGuardTests {
             guard depthAtLineStart == 0 || depthAtLineStart == 1 else { return }
             let code = normalized(line)
             guard code.isEmpty == false, code != "}" else { return }
-            surface.insert("\(depthAtLineStart): \(code)")
+            surface["\(depthAtLineStart): \(code)", default: 0] += 1
         }
         for character in source {
             if character == "\n" {
