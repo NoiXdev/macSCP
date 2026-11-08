@@ -31,10 +31,24 @@ import Testing
 /// the Core-layer twin named above, which guards a differently-shaped call
 /// in a different file — because it is the SAME call site and the same
 /// scanner, and a second copy of this scanner would be a second thing to
-/// keep in step. The file keeps its name: eleven places name it, counted
-/// 2026-11-08 with
-/// `/usr/bin/grep -rno ConnectTimeoutAppWiringGuard --include='*.swift' --include='*.md' Sources Tests docs CLAUDE.md .superpowers`
-/// (exit 0), of which nine are in test files other than this one.
+/// keep in step. The file also keeps its name, which now under-describes
+/// it: **4** other test files name this suite, counted 2026-11-08 with
+/// `/usr/bin/grep -rlo ConnectTimeoutAppWiringGuard --include='*.swift' Tests | /usr/bin/grep -v ConnectTimeoutAppWiringGuardTests.swift`
+/// (exit 0), each citing it as the shape a wiring guard takes.
+///
+/// That command is narrowed on purpose, and the narrowing is the
+/// measurement rather than tidiness. It excludes THIS file, whose own text
+/// — including the command — names the suite several times, and it excludes
+/// `.md`, because prose about this guard in `docs/` and in a plan ledger
+/// would otherwise move the figure without a line of code changing. The
+/// wide form a first draft of this sentence used,
+/// `/usr/bin/grep -rno ConnectTimeoutAppWiringGuard --include='*.swift' --include='*.md' Sources Tests docs CLAUDE.md .superpowers`,
+/// printed 11 occurrences when that draft was written, and no figure is
+/// quoted for it here because it does not hold still: this paragraph, a
+/// `docs/BACKLOG.md` row and a task report each added to it while the
+/// sentence was being corrected, and the count rose twice between two
+/// runs of the same command. The figure that matters for a rename is
+/// files-to-edit, which is what the narrow form counts.
 ///
 /// The remaining three arguments are counted, not read, and the count is
 /// here to catch the parser drifting rather than the code changing — the
