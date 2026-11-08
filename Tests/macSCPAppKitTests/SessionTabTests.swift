@@ -174,7 +174,15 @@ struct SessionTabTests {
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "a", count: 64)))
 
-        let session = try #require(tab.session)
+        // `guard let`, not `#require(tab.session)`: a `#require` reports what
+        // its operand evaluated to, and the operand here is a whole session,
+        // whose `remoteFS` is an endpoint in every test that has a real one.
+        // This one's is a `LocalFileSystem`, so nothing would leak today —
+        // which is exactly how the shape survives into a test where it does.
+        guard let session = tab.session else {
+            Issue.record("the session this case needs is not attached")
+            return
+        }
         tab.checksumLedgerBinding(for: .remote, in: session)
             .wrappedValue.record(.checksum(digest), for: item)
 
@@ -194,7 +202,15 @@ struct SessionTabTests {
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "b", count: 64)))
 
-        let session = try #require(tab.session)
+        // `guard let`, not `#require(tab.session)`: a `#require` reports what
+        // its operand evaluated to, and the operand here is a whole session,
+        // whose `remoteFS` is an endpoint in every test that has a real one.
+        // This one's is a `LocalFileSystem`, so nothing would leak today —
+        // which is exactly how the shape survives into a test where it does.
+        guard let session = tab.session else {
+            Issue.record("the session this case needs is not attached")
+            return
+        }
         tab.checksumLedgerBinding(for: .remote, in: session)
             .wrappedValue.record(.checksum(digest), for: item)
 
@@ -210,7 +226,15 @@ struct SessionTabTests {
         let item = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "c", count: 64)))
-        let session = try #require(tab.session)
+        // `guard let`, not `#require(tab.session)`: a `#require` reports what
+        // its operand evaluated to, and the operand here is a whole session,
+        // whose `remoteFS` is an endpoint in every test that has a real one.
+        // This one's is a `LocalFileSystem`, so nothing would leak today —
+        // which is exactly how the shape survives into a test where it does.
+        guard let session = tab.session else {
+            Issue.record("the session this case needs is not attached")
+            return
+        }
         tab.checksumLedgerBinding(for: .remote, in: session)
             .wrappedValue.record(.checksum(digest), for: item)
 
