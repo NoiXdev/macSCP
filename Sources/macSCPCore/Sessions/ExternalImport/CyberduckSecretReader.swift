@@ -47,15 +47,24 @@ public enum CyberduckSecretLookup: Sendable {
 /// (Withdrawn wording, verbatim: "`kSecAttrProtocolSSH` for an sftp
 /// bookmark or `kSecAttrProtocolHTTPS` for an S3 one". It enumerated two
 /// where `keychainProtocolName(for:)` below has had three arms that name a
-/// constant since 2026-11-08. Counted in that same moment, from the
-/// repository root:
+/// constant since 2026-11-08. Counted from the repository root:
 ///
-///     /usr/bin/grep -c 'return kSecAttrProtocol' Sources/macSCPCore/Sessions/ExternalImport/CyberduckSecretReader.swift
+///     /usr/bin/grep -c 'case .[a-z0-9]*: return kSecAttrProtocol' Sources/macSCPCore/Sessions/ExternalImport/CyberduckSecretReader.swift
 ///
-/// printing 3. `grep -c` and not `grep -o | wc -l` because each arm really
-/// is one line, which is the one case where counting lines is counting
-/// occurrences; the `return` in the pattern is what keeps this prose from
-/// matching itself.)
+/// printing 3 — the three arms, and re-run after this paragraph existed.
+/// `grep -c` and not `grep -o | wc -l` because each arm really is one line,
+/// which is the one case where counting lines is counting occurrences.
+///
+/// Two claims made here on 2026-11-08 are themselves withdrawn, verbatim:
+/// the figure **"printing 3"** standing beside the pattern
+/// `'return kSecAttrProtocol'`, and the defence **"the `return` in the
+/// pattern is what keeps this prose from matching itself"**. Run as
+/// committed, that pattern printed **4**. The fourth line was the command
+/// line quoting it, which the `return` does not exclude — it excludes the
+/// surrounding sentences, and the command line is prose in this same
+/// comment. The pattern above is anchored on the `case` label instead, so
+/// no quotation of it can satisfy it: fed its own command line it matches
+/// nothing and exits 1, and fed one arm it matches once.)
 ///
 /// macSCP never writes to these items, never caches what it reads outside
 /// the caller's own `SecretStore` slot, and reads only what one query
