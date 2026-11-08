@@ -67,6 +67,157 @@ struct CLICompletionScriptTests {
         }
     }
 
+    /// FTP's flags reach the generated script, in every shell the picker
+    /// offers (FTP plan Task 10).
+    ///
+    /// The flag list is not written out here. It is the image of
+    /// `FTPField.allCases` — FTP's single source for which fields exist —
+    /// under `Self.flag(for:)`, whose switch is exhaustive, so a field added
+    /// to `FTPFieldSchema` fails to build this test until someone says
+    /// whether the command line carries it.
+    ///
+    /// The NEGATIVE half, and the positive that keeps it honest: `password`
+    /// is the one FTP field with no flag, and no script may offer
+    /// `--password`. Both go through `offers(_:_:in:)`, so the control is
+    /// the same function as the check — `--password-command` MUST be found,
+    /// and it is the flag that shares the prefix, which is precisely how a
+    /// looser form of this check (`script.contains("--password")`) would be
+    /// red on a correct build and its negation green on a broken one.
+    @Test(arguments: ShellCompletionRecipe.Shell.allCases)
+    func theCompletionScriptListsTheFTPFlags(
+        shell: ShellCompletionRecipe.Shell
+    ) async throws {
+        let binary = try CLIMatrix.binaryPath()
+        let result = try await Self.runProcess(
+            binary, ["--generate-completion-script", shell.rawValue])
+        #expect(result.status == 0, """
+            --generate-completion-script \(shell.rawValue) exited \
+            \(result.status): \(result.stderr)
+            """)
+        let script = result.stdout
+        #expect(Self.offers("--password-command", shell, in: script), """
+            the \(shell.rawValue) script does not declare --password-command \
+            in the form this check reads, so the absence asserted below \
+            would be the reader's and not the script's
+            """)
+        for field in FTPField.allCases {
+            guard let flag = Self.flag(for: field) else {
+                #expect(!Self.offers("--\(field.rawValue)", shell, in: script), """
+                    the \(shell.rawValue) script offers --\(field.rawValue), \
+                    which this tool takes from nobody
+                    """)
+                continue
+            }
+            #expect(Self.offers(flag, shell, in: script), """
+                the \(shell.rawValue) script does not offer \(flag), FTP's \
+                flag for the \(field.rawValue) field
+                """)
+        }
+    }
+
+    /// Whether a generated script declares a long flag — in the form THAT
+    /// shell's generator writes, because the three disagree and a single
+    /// substring search would answer for one of them and guess for the
+    /// other two. Measured on the debug binary, 2026-11-08, each count from
+    /// the command beside it, run from the repository root against a script
+    /// saved by `macscp-cli --generate-completion-script <shell>`:
+    ///
+    /// - zsh writes an option spec, `'--host[…]'`:
+    ///   `/usr/bin/grep -o -F -- "'--host[" zsh.sh | wc -l` → 3
+    /// - bash writes the bare flag, `--host`, in `non_repeating_options=(…)`
+    ///   and in its own `case` labels; read through `longFlagTokens(in:)`,
+    ///   which takes `--password-command` whole rather than as `--password`
+    ///   plus a tail.
+    /// - fish writes `-l 'host'`, with no dashes in the name:
+    ///   `/usr/bin/grep -o -F -- "-l 'host'" fish.fish | wc -l` → 3
+    ///
+    /// The figures are a record of the forms, not a contract: what the test
+    /// asserts is presence and absence, so a generator update that changes
+    /// how many places a flag appears in moves nothing here.
+    static func offers(
+        _ flag: String, _ shell: ShellCompletionRecipe.Shell, in script: String
+    ) -> Bool {
+        let name = flag.dropFirst(2)
+        switch shell {
+        case .zsh: return script.contains("'--\(name)[")
+        case .bash: return longFlagTokens(in: script).contains(flag)
+        case .fish: return script.contains("-l '\(name)'")
+        }
+    }
+
+    /// The flag each `FTPField` carries on the command line, or `nil` for a
+    /// field the command line does not carry.
+    ///
+    /// Derived from the field's own raw value — kebab-cased, the way
+    /// ArgumentParser spells a `.long` option — with exactly two stated
+    /// exceptions:
+    ///
+    /// - `username` is `--user`, the flag SSH and WebDAV already carry for
+    ///   the same thing. A third spelling of one concept is what sharing it
+    ///   avoids.
+    /// - `password` has NO flag and cannot be given one: `sessions add` and
+    ///   `sessions edit` take no secret at all, which
+    ///   `CLISessionsStoreEditingGuardTests` holds their source to. The
+    ///   absence is the design, so it is asserted above rather than skipped.
+    static func flag(for field: FTPField) -> String? {
+        switch field {
+        case .username: return "--user"
+        case .password: return nil
+        case .host, .port, .security, .initialPath:
+            return "--" + kebabCased(field.rawValue)
+        }
+    }
+
+    /// `initialPath` → `initial-path`: a lower-case letter is inserted
+    /// before, and an upper-case run is folded into, a hyphen-separated
+    /// word, which is how `ArgumentParser` derives a `.long` name from a
+    /// property. Only ASCII, because every field identifier here is.
+    static func kebabCased(_ name: String) -> String {
+        var out = ""
+        for character in name {
+            if character.isUppercase {
+                out.append("-")
+                out.append(Character(character.lowercased()))
+            } else {
+                out.append(character)
+            }
+        }
+        return out
+    }
+
+    /// Every distinct long-flag token in a generated script — bash's form,
+    /// where the flag is written bare.
+    ///
+    /// A token is `--` followed by a lower-case letter and then letters,
+    /// digits and hyphens, which is the whole shape this tool's flags take
+    /// — so `--password-command` comes back whole rather than as
+    /// `--password` plus a tail, which is exactly what the negative check
+    /// above depends on.
+    static func longFlagTokens(in script: String) -> Set<String> {
+        var tokens: Set<String> = []
+        var index = script.startIndex
+        while let dashes = script.range(of: "--", range: index..<script.endIndex) {
+            var end = dashes.upperBound
+            guard end < script.endIndex, script[end].isLowercase, script[end].isASCII else {
+                index = dashes.upperBound
+                continue
+            }
+            while end < script.endIndex,
+                script[end].isASCII,
+                script[end].isLowercase || script[end].isNumber || script[end] == "-"
+            {
+                end = script.index(after: end)
+            }
+            var token = String(script[dashes.lowerBound..<end])
+            // A trailing hyphen is not part of a flag name; it is the start
+            // of whatever follows.
+            while token.hasSuffix("-") { token.removeLast() }
+            tokens.insert(token)
+            index = end
+        }
+        return tokens
+    }
+
     // MARK: - The recipe's line loads in a real interpreter
 
     /// The whole point of the section: paste the line into a shell and the

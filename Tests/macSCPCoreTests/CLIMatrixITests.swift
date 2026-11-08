@@ -2231,6 +2231,107 @@ struct CLIMatrixWebDAVITests {
     }
 }
 
+/// The fourth protocol matrix (FTP plan Task 10), with the same cases in the
+/// same order as the three suites above — a suite that ran a subset would
+/// read as covered and measure less.
+///
+/// **None of these cases has ever run.** They are declared here, gated like
+/// their siblings, and the container they dial is FTP plan Task 11's work in
+/// the main checkout: the rig's compose file mounts its seed relative to
+/// itself, so it is started from `/Users/noidee/macSCP` and never from a
+/// worktree. What Task 10 needed from this suite is its `kind`, which
+/// `everyConnectionKindHasAMatrixSuite` reads in a plain `swift test`.
+///
+/// **One case below carries a known expectation debt**, named here rather
+/// than left for whoever first starts the container.
+/// `diagnoseDialMeasuresTheBackendsOwnConnect` asserts that a backend with no
+/// host keys comes back `ok` on a fresh store. FTP has no host keys, and the
+/// rig fixture is PLAIN (`CLIMatrix.fixture(for:name:)`, for the reason the
+/// WebDAV vhost is plain: the CLI dials with `certificate: .refusing`) — and
+/// `FTPProbe.open` skips a plain-mode login before it reads the secret,
+/// because a diagnosis has nobody to ask before putting a password on the
+/// wire. So that row will come back `skipped`, not `ok`. Changing the
+/// expectation is Task 11's; sending the credential to make it `ok` is
+/// forbidden (Ruling T8.4), and a greeting-only probe that measures
+/// reachability with no credential is the recorded better answer.
+@Suite("CLIMatrixFTP", .enabled(if: rigIsEnabled), .serialized)
+struct CLIMatrixFTPITests {
+    static let kind: ConnectionKind = .ftp
+
+    @Test func listsASeededFileAsJSON() async throws {
+        try await CLIMatrixCases.listsASeededFileAsJSON(Self.kind)
+    }
+
+    @Test func mkdirCreatesADirectory() async throws {
+        try await CLIMatrixCases.mkdirCreatesADirectory(Self.kind)
+    }
+
+    @Test func putUploadsALocalFile() async throws {
+        try await CLIMatrixCases.putUploadsALocalFile(Self.kind)
+    }
+
+    @Test func getDownloadsARemoteFile() async throws {
+        try await CLIMatrixCases.getDownloadsARemoteFile(Self.kind)
+    }
+
+    @Test(arguments: ConflictAction.allCases)
+    func putOverAnExistingFile(action: ConflictAction) async throws {
+        try await CLIMatrixCases.putOverAnExistingFile(Self.kind, action: action)
+    }
+
+    @Test func aDirectoryIsRefusedByBothTransfers() async throws {
+        try await CLIMatrixCases.aDirectoryIsRefusedByBothTransfers(Self.kind)
+    }
+
+    @Test func rmDeletesAFile() async throws {
+        try await CLIMatrixCases.rmDeletesAFile(Self.kind)
+    }
+
+    @Test func rmRefusesADirectoryUntilRecursive() async throws {
+        try await CLIMatrixCases.rmRefusesADirectoryUntilRecursive(Self.kind)
+    }
+
+    @Test func rmRefusesTheSessionRootWithoutTheEscapeHatch() async throws {
+        try await CLIMatrixCases.rmRefusesTheSessionRootWithoutTheEscapeHatch(Self.kind)
+    }
+
+    @Test func anUnknownHostKeyIsRefusedUntilAccepted() async throws {
+        try await CLIMatrixCases.anUnknownHostKeyIsRefusedUntilAccepted(Self.kind)
+    }
+
+    @Test func aChangedHostKeyIsAHardStop() async throws {
+        try await CLIMatrixCases.aChangedHostKeyIsAHardStop(Self.kind)
+    }
+
+    @Test func theSecretComesFromThePasswordCommand() async throws {
+        try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
+    }
+
+    @Test func diagnosePingMeasuresTheUniversalSteps() async throws {
+        try await CLIMatrixCases.diagnosePingMeasuresTheUniversalSteps(Self.kind)
+    }
+
+    @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
+        try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
+
+    @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
+    }
+
+    @Test func sessionsAddEditRmRoundTrip() async throws {
+        try await CLIMatrixCases.sessionsAddEditRmRoundTrip(Self.kind)
+    }
+
+    @Test func tunnelsEditListRm() async throws {
+        try await CLIMatrixCases.tunnelsEditListRm(Self.kind)
+    }
+
+    @Test func tunnelsStartIsRefusedWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsStartIsRefusedWhereCoreSaysSo(Self.kind)
+    }
+}
+
 // MARK: - sessions
 
 /// The one subcommand that opens no connection, so the one suite in the
@@ -2707,20 +2808,35 @@ struct CLIMatrixDiagnoseITests {
 // MARK: - What makes the matrix a matrix
 
 /// The derivation guards. None of these needs the rig or the binary, so they
-/// run in the ordinary `swift test` — which is where a fourth backend, or a
-/// ninth subcommand, is actually going to be added (the seventh, `diagnose`,
-/// arrived on 2026-09-04, the eighth, `tunnels`, on 2026-09-06).
+/// run in the ordinary `swift test` — which is where a backend or a
+/// subcommand is actually going to be added (the seventh subcommand,
+/// `diagnose`, arrived on 2026-09-04, the eighth, `tunnels`, on 2026-09-06,
+/// and the fourth backend, FTP, on 2026-11-08). That is what made
+/// `everyConnectionKindHasAMatrixSuite` below the one red FTP plan Task 10
+/// had to clear: it is reachable in a session that cannot start the rig.
+///
+/// (Withdrawn wording, verbatim: "which is where a fourth backend, or a
+/// ninth subcommand, is actually going to be added". The fourth backend has
+/// been added, so the sentence described the future of something already
+/// past.)
 @Suite("CLIMatrixCoverage")
 struct CLIMatrixCoverageTests {
-    /// The one place the three suites above are enumerated, and it is
+    /// The one place the protocol suites above are enumerated, and it is
     /// checked against `ConnectionKind.allCases` rather than against a
-    /// number. A fourth protocol turns this red until it has a suite —
+    /// number. A fifth protocol turns this red until it has a suite —
     /// which is the whole reason the suites carry a `kind` at all.
+    ///
+    /// (Withdrawn wording, verbatim: "The one place the three suites above
+    /// are enumerated", "A fourth protocol turns this red until it has a
+    /// suite". The fourth arrived — `CLIMatrixFTPITests`, FTP plan Task 10 —
+    /// and the sentence counted suites, which is the cardinality CLAUDE.md
+    /// says to count in the moment or not write.)
     @Test func everyConnectionKindHasAMatrixSuite() {
         let covered: Set<ConnectionKind> = [
             CLIMatrixSSHITests.kind,
             CLIMatrixS3ITests.kind,
             CLIMatrixWebDAVITests.kind,
+            CLIMatrixFTPITests.kind,
         ]
         #expect(covered == Set(ConnectionKind.allCases))
     }

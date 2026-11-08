@@ -391,8 +391,9 @@ struct CLIMatrix: Sendable {
     /// needs for it. The flags themselves are the required ones
     /// `SessionFieldOptions.requiredFields(for:)` lists, plus the ones this
     /// rig's fixture actually sets — the port SSH is reached on, S3's region
-    /// and path-style addressing — so the saved session is a usable copy of
-    /// the fixture rather than a shape that merely parses.
+    /// and path-style addressing, FTP's security mode — so the saved session
+    /// is a usable copy of the fixture rather than a shape that merely
+    /// parses.
     ///
     /// No secret is named anywhere in it, and none could be: `sessions add`
     /// takes none (its own `discussion` says so), so the vector carries a
@@ -419,12 +420,25 @@ struct CLIMatrix: Sendable {
             if webdav.useNextcloudPath { arguments.append("--nextcloud") }
         case .ftp:
             guard let ftp = session.ftp else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
-            // The shared flags only. The security mode and the initial folder
-            // have no flag until FTP plan Task 10 names them, and this vector
-            // takes them from there.
+            // Every field the fixture's own block fills, the way the three
+            // arms above do. The security mode is passed EXPLICITLY even
+            // though the rig's is the one `sessions add` would also refuse
+            // to guess: `plain` is not the form's default (explicit FTPS
+            // is), so a vector that left it out would save a session that
+            // dials the rig's control port expecting `AUTH TLS`.
+            //
+            // (Withdrawn wording, verbatim: "The shared flags only. The
+            // security mode and the initial folder have no flag until FTP
+            // plan Task 10 names them, and this vector takes them from
+            // there." Task 10 named them: `--security` and `--initial-path`,
+            // read off `FTPField` in `SessionFieldOptions`.)
             arguments += [
                 "--host", ftp.host, "--port", String(ftp.port), "--user", ftp.username,
+                "--security", ftp.security.rawValue,
             ]
+            if let initialPath = ftp.initialPath {
+                arguments += ["--initial-path", initialPath]
+            }
         }
         return arguments
     }

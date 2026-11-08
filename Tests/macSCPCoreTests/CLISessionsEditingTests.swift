@@ -134,6 +134,159 @@ struct CLISessionsEditingTests {
     /// missing. Also the proof that `list` stayed the DEFAULT subcommand: the
     /// verification runs `sessions --json`, with no verb, exactly as every
     /// script written before this task did.
+    /// `--kind ftp`, end to end through the binary (FTP plan Task 10): the
+    /// flags FTP owns are accepted and written, and the ownership holds in
+    /// BOTH directions — an FTP-only flag is refused for another kind, and
+    /// another kind's flag is refused for FTP. One direction alone is the
+    /// shape of a table that lists FTP and owns nothing.
+    ///
+    /// Which flags those are is `FTPField`'s business, not this test's: the
+    /// invocation gives one flag per field the command line carries, and the
+    /// field a flag would be a defect for — `password` — is the subject of
+    /// this suite's own guard rather than of an invocation here.
+    ///
+    /// The `--kind ssh` run in the middle gives SSH everything it needs, so
+    /// the only thing wrong with it is the FTP flag: a run missing `--user`
+    /// as well would exit 64 for a reason this case is not about.
+    @Test func kindFTPIsAcceptedAndItsFlagsAreOfferedForItAlone() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        let added = try await cli.run([
+            "sessions", "add", "files", "--kind", "ftp",
+            "--host", "ftp.example.com", "--user", "dave", "--port", "2121",
+            "--security", FTPSecurityMode.plain.rawValue, "--initial-path", "/pub",
+        ])
+        #expect(added.status == 0, "sessions add failed: \(added.stderr)")
+
+        let ftp = try #require(cli.storedSession(named: "files")?.ftp)
+        #expect(ftp.host == "ftp.example.com")
+        #expect(ftp.port == 2121)
+        #expect(ftp.username == "dave")
+        #expect(ftp.security == .plain)
+        #expect(ftp.initialPath == "/pub")
+
+        let listed = try await cli.rows(["sessions", "--json"])
+        #expect(listed.count == 1)
+        #expect(listed.first?["target"] as? String == "dave@ftp.example.com:2121")
+
+        // FTP's own flags, offered for FTP alone.
+        for flag in ["--security=\(FTPSecurityMode.plain.rawValue)", "--initial-path=/pub"] {
+            let refused = try await cli.run([
+                "sessions", "add", "ssh-session", "--kind", "ssh",
+                "--host", "h.example.org", "--user", "bob", flag,
+            ])
+            #expect(
+                refused.status == Self.validationFailure,
+                "\(flag) on --kind ssh exited \(refused.status): \(refused.stderr)")
+            let named = String(flag.split(separator: "=")[0])
+            #expect(
+                refused.stderr.contains("\(named) applies to --kind ftp"),
+                "\(refused.stderr)")
+            #expect(cli.storedSession(named: "ssh-session") == nil)
+        }
+
+        // And the other direction: a flag FTP does not own.
+        let wrongWay = try await cli.run([
+            "sessions", "add", "bucketed", "--kind", "ftp",
+            "--host", "ftp.example.com", "--bucket", "backups",
+        ])
+        #expect(
+            wrongWay.status == Self.validationFailure,
+            "exit \(wrongWay.status): \(wrongWay.stderr)")
+        #expect(wrongWay.stderr.contains("--bucket applies to --kind s3"), "\(wrongWay.stderr)")
+        #expect(cli.storedSession(named: "bucketed") == nil)
+    }
+
+    /// FTP's defaults, which are the schema's and not the command line's:
+    /// an untouched security mode is explicit FTPS (the safe mode is the one
+    /// nobody has to choose, `FTPFieldSchema.defaults`), an untouched port
+    /// is that mode's own, and no user name is anonymous FTP rather than a
+    /// refusal — `FTPFieldSchema.credential` marks neither credential field
+    /// required, and `sessions add` must not be stricter than the form.
+    ///
+    /// The numbers are read off `FTPSecurityMode.defaultPort` rather than
+    /// written: 21 here is the enum's answer, not a figure this test
+    /// remembers.
+    @Test func addWithoutASecurityModeStoresExplicitFTPSAndItsPort() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "bare", "--kind", "ftp", "--host", "ftp.example.com",
+        ]).status == 0)
+
+        let ftp = try #require(cli.storedSession(named: "bare")?.ftp)
+        #expect(ftp.security == .explicitTLS)
+        #expect(ftp.port == FTPSecurityMode.explicitTLS.defaultPort)
+        #expect(ftp.username.isEmpty)
+        #expect(ftp.initialPath == nil)
+
+        // The one field `add` cannot do without, and the message says which
+        // kind it is required for.
+        let refused = try await cli.run(["sessions", "add", "hostless", "--kind", "ftp"])
+        #expect(refused.status == Self.validationFailure, "exit \(refused.status): \(refused.stderr)")
+        #expect(refused.stderr.contains("--host is required for --kind ftp"), "\(refused.stderr)")
+    }
+
+    /// An FTP session's fields change the way every other kind's do, and the
+    /// flags left out change nothing.
+    @Test func editChangesAnFTPSessionsOwnFields() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "files", "--kind", "ftp",
+            "--host", "ftp.example.com", "--user", "dave", "--initial-path", "/pub",
+        ]).status == 0)
+
+        let edited = try await cli.run([
+            "sessions", "edit", "files",
+            "--security", FTPSecurityMode.implicitTLS.rawValue, "--port", "990",
+        ])
+        #expect(edited.status == 0, "sessions edit failed: \(edited.stderr)")
+
+        let ftp = try #require(cli.storedSession(named: "files")?.ftp)
+        #expect(ftp.security == .implicitTLS)
+        #expect(ftp.port == 990)
+        // Untouched by the edit above.
+        #expect(ftp.host == "ftp.example.com")
+        #expect(ftp.username == "dave")
+        #expect(ftp.initialPath == "/pub")
+    }
+
+    /// `--initial-path ""` is the one empty value these verbs accept, and it
+    /// CLEARS the folder rather than storing a blank one.
+    ///
+    /// The contrast is the measurement: `--host ""` in the same invocation
+    /// shape is refused with exit 64 (`anEmptyValueIsRefusedByBothVerbs`
+    /// pins that for the fields where blank is a mistake), while this one
+    /// gets back to `nil` — "whatever folder the server starts in", which is
+    /// a state `StoredFTPConfig` can hold and a person must be able to
+    /// return to. A field that could be written and not erased is the limit
+    /// the four `@Flag`s state as theirs; this one does not have it.
+    @Test func anEmptyInitialPathClearsTheFolderRatherThanBeingRefused() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "files", "--kind", "ftp",
+            "--host", "ftp.example.com", "--initial-path", "/pub",
+        ]).status == 0)
+        #expect(cli.storedSession(named: "files")?.ftp?.initialPath == "/pub")
+
+        let cleared = try await cli.run(["sessions", "edit", "files", "--initial-path", ""])
+        #expect(cleared.status == 0, "sessions edit failed: \(cleared.stderr)")
+        #expect(cli.storedSession(named: "files")?.ftp?.initialPath == nil)
+
+        // The field beside it, where blank is still refused — so the
+        // acceptance above is this field's rule and not a check that went
+        // away.
+        let refused = try await cli.run(["sessions", "edit", "files", "--host", ""])
+        #expect(refused.status == Self.validationFailure, "exit \(refused.status): \(refused.stderr)")
+        #expect(cli.storedSession(named: "files")?.ftp?.host == "ftp.example.com")
+    }
+
     @Test func addCreatesTheGroupPathAndCarriesItsTagsAndPanes() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }
@@ -267,9 +420,16 @@ struct CLISessionsEditingTests {
         ]).status == 0)
     }
 
-    /// `--user` belongs to TWO kinds, so the message names both — the
-    /// ownership table is per flag, not one kind per flag.
-    @Test func aFlagSharedByTwoKindsNamesBothWhenItIsRefused() async throws {
+    /// `--user` belongs to several kinds, so the message names them all —
+    /// the ownership table is per flag, not one kind per flag.
+    ///
+    /// Renamed on 2026-11-08, from `aFlagSharedByTwoKindsNamesBothWhenItIsRefused`:
+    /// FTP took `--user` too (FTP plan Task 10), so the old name counted
+    /// kinds and counted them short. The assertion is the whole message
+    /// rather than its first two kinds, which is what let it stay green
+    /// while naming one fewer than the tool prints — a substring of a longer
+    /// list reads exactly like the list.
+    @Test func aFlagSharedBySeveralKindsNamesThemAllWhenItIsRefused() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }
 
@@ -279,7 +439,9 @@ struct CLISessionsEditingTests {
             "--access-key", "AKIA", "--user", "bob",
         ])
         #expect(refused.status == Self.validationFailure, "exit \(refused.status): \(refused.stderr)")
-        #expect(refused.stderr.contains("--user applies to --kind ssh, webdav"), "\(refused.stderr)")
+        #expect(
+            refused.stderr.contains("--user applies to --kind ssh, webdav, ftp"),
+            "\(refused.stderr)")
     }
 
     @Test func aMissingRequiredFieldIsRefused() async throws {
@@ -945,6 +1107,16 @@ struct CLISessionsStoreEditingGuardTests {
         #expect(source.contains("--bucket"), """
             SessionFieldOptions.swift no longer names --bucket — same concern \
             as ParsableArguments above.
+            """)
+        // FTP's half of that table is DERIVED, not written out: the flags
+        // are the image of `FTPField.allCases` under the file's own
+        // `flag(for:)`. A build that spelled them instead would still pass
+        // every behavioural case in the suite above, and the next field
+        // added to `FTPFieldSchema` would be the one nobody noticed.
+        #expect(source.contains("FTPField.allCases"), """
+            SessionFieldOptions.swift no longer reads FTP's flags off \
+            FTPField.allCases — the flag list and the field list can now \
+            disagree without anything saying so.
             """)
     }
 

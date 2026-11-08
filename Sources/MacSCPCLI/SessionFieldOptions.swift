@@ -20,12 +20,17 @@ enum PaneOption: String, CaseIterable, ExpressibleByArgument {
 }
 
 /// The fields `sessions add` and `sessions edit` write, as one option group
-/// both verbs declare — the flags of all three backends side by side, with
-/// the rule for which flag belongs to which backend written once.
+/// both verbs declare — every backend's flags side by side, with the rule
+/// for which flag belongs to which backend written once.
+///
+/// (Withdrawn wording, verbatim: "the flags of all three backends side by
+/// side". FTP is the fourth, and a sentence that counts backends is a
+/// cardinality this project's rules say to count in the moment or not write.)
 ///
 /// **No secret is here, and none can be added.** The S3 ACCESS KEY is a flag
 /// because it is not a secret (it travels in every signed URL); the secret
-/// access key, the SSH password and the key passphrase are not flags, are
+/// access key, the SSH and FTP passwords and the key passphrase are not
+/// flags, are
 /// not read from stdin, and are not written to the keychain by this tool at
 /// all. A password-authenticated session created here is asked for its
 /// password by the app on first connect, or answered by
@@ -39,13 +44,17 @@ enum PaneOption: String, CaseIterable, ExpressibleByArgument {
 struct SessionFieldOptions: ParsableArguments {
     // MARK: SSH
 
-    @Option(name: .long, help: "SSH: the host to dial.")
+    @Option(name: .long, help: "SSH and FTP: the host to dial.")
     var host: String?
 
-    @Option(name: .long, help: "SSH: the port to dial. Default 22.")
+    @Option(
+        name: .long,
+        help: "SSH and FTP: the port to dial. Default 22 for SSH, the security mode's for FTP.")
     var port: Int?
 
-    @Option(name: .long, help: "SSH and WebDAV: the user name to log in as.")
+    @Option(
+        name: .long,
+        help: "SSH, WebDAV and FTP: the user name to log in as. Omit it for anonymous FTP.")
     var user: String?
 
     @Option(name: .long, help: "SSH: path to a private key; the session authenticates with it.")
@@ -82,6 +91,25 @@ struct SessionFieldOptions: ParsableArguments {
     @Flag(name: .long, help: "WebDAV: append the Nextcloud files path to the base URL.")
     var nextcloud = false
 
+    // MARK: FTP
+
+    /// The two fields FTP does not share with another backend. Its host,
+    /// port and user name are `--host`, `--port` and `--user` above; its
+    /// password is nowhere, like every other secret here.
+    ///
+    /// No DEFAULT on either: a flag left out must change nothing, which is
+    /// what `edited(_:removingTags:)` depends on. The defaults FTP does have
+    /// are the schema's — explicit FTPS and that mode's own port
+    /// (`FTPFieldSchema.defaults`) — and `newSession` reads them from there
+    /// rather than restating them.
+    @Option(
+        name: .long,
+        help: "FTP: how the connection is protected. Default explicitTLS.")
+    var security: FTPSecurityMode?
+
+    @Option(name: .long, help: "FTP: the folder this session opens in.")
+    var initialPath: String?
+
     // MARK: Every kind
 
     @Option(
@@ -102,33 +130,98 @@ struct SessionFieldOptions: ParsableArguments {
 
     // MARK: - Which flag belongs to which backend
 
+    /// FTP's flag for one of its fields, or `nil` for a field the command
+    /// line does not carry.
+    ///
+    /// EXHAUSTIVE over `FTPField`, which is FTP's single source for which
+    /// fields exist (`FTPFieldSchema` reads all of its schemas, its config
+    /// factory and its persistence adapter off it): a field added there does
+    /// not compile until someone says whether it has a flag here. That is
+    /// this project's rule about a guard spelling a symbol it could read
+    /// instead, applied to the ownership table below — FTP's column is the
+    /// image of `FTPField.allCases` under this function, not a second copy
+    /// of the field list.
+    ///
+    /// `username` is `--user`, the flag SSH and WebDAV already carry for the
+    /// same thing; a third spelling of one concept is what sharing it
+    /// avoids. `password` has NO flag and cannot be given one — see this
+    /// type's own header, and `CLISessionsStoreEditingGuardTests`, which
+    /// scans this file for the four APIs that could change that.
+    private static func flag(for field: FTPField) -> String? {
+        switch field {
+        case .host: return "--host"
+        case .port: return "--port"
+        case .security: return "--security"
+        case .initialPath: return "--initial-path"
+        case .username: return "--user"
+        case .password: return nil
+        }
+    }
+
+    /// Which flags each backend owns.
+    ///
+    /// FTP's list is READ OFF `FTPField`; the other three are written out,
+    /// because their field enums (`SSHField`, `S3Field`, `WebDAVField`) do
+    /// not drive this command line — their flags predate the data-driven
+    /// schemas and are not a one-to-one image of any field set. Converting
+    /// them is a change of its own, not a thing to do in passing while
+    /// adding a fourth backend.
+    private static func flags(owning kind: ConnectionKind) -> [String] {
+        switch kind {
+        case .ssh: return ["--host", "--port", "--user", "--key", "--agent"]
+        case .s3:
+            return [
+                "--endpoint", "--bucket", "--access-key", "--region",
+                "--path-style", "--bucket-list",
+            ]
+        case .webdav: return ["--url", "--user", "--nextcloud"]
+        case .ftp: return FTPField.allCases.compactMap(flag(for:))
+        }
+    }
+
     /// Every kind-specific flag, the kinds it applies to, and whether this
     /// invocation gave it.
     ///
     /// ONE table, read by the refusal below and by nothing else — the
     /// alternative is a `switch` per verb, and two of those disagree the
-    /// first time a flag moves. `--user` names two kinds because it really
-    /// belongs to two; the entry carries a list rather than a single kind so
-    /// that fact does not need a second shape to live in.
+    /// first time a flag moves. The kinds come from `flags(owning:)` rather
+    /// than being written beside each flag, so the two directions —
+    /// "which flags does this kind own" and "which kinds own this flag" —
+    /// cannot disagree. `--user` therefore names every kind that really
+    /// carries it without the fact needing a second shape to live in.
+    ///
+    /// (Withdrawn wording, verbatim: "`--user` names two kinds because it
+    /// really belongs to two; the entry carries a list rather than a single
+    /// kind so that fact does not need a second shape to live in." The
+    /// entries no longer carry a list — they are given one — and `--user`
+    /// belongs to three kinds since FTP arrived, which is the count the old
+    /// sentence fixed in place.)
     ///
     /// The COMMON flags (`--group`, `--tag`, `--pane`) are absent on purpose:
     /// they apply to every kind, so no invocation of them can be refused.
     private var kindSpecificFlags: [(flag: String, kinds: [ConnectionKind], given: Bool)] {
-        [
-            ("--host", [.ssh], host != nil),
-            ("--port", [.ssh], port != nil),
-            ("--user", [.ssh, .webdav], user != nil),
-            ("--key", [.ssh], key != nil),
-            ("--agent", [.ssh], agent),
-            ("--endpoint", [.s3], endpoint != nil),
-            ("--bucket", [.s3], bucket != nil),
-            ("--access-key", [.s3], accessKey != nil),
-            ("--region", [.s3], region != nil),
-            ("--path-style", [.s3], pathStyle),
-            ("--bucket-list", [.s3], bucketList),
-            ("--url", [.webdav], url != nil),
-            ("--nextcloud", [.webdav], nextcloud),
+        let given: [(flag: String, given: Bool)] = [
+            ("--host", host != nil),
+            ("--port", port != nil),
+            ("--user", user != nil),
+            ("--key", key != nil),
+            ("--agent", agent),
+            ("--endpoint", endpoint != nil),
+            ("--bucket", bucket != nil),
+            ("--access-key", accessKey != nil),
+            ("--region", region != nil),
+            ("--path-style", pathStyle),
+            ("--bucket-list", bucketList),
+            ("--url", url != nil),
+            ("--nextcloud", nextcloud),
+            ("--security", security != nil),
+            ("--initial-path", initialPath != nil),
         ]
+        return given.map { entry in
+            (entry.flag,
+             ConnectionKind.allCases.filter { Self.flags(owning: $0).contains(entry.flag) },
+             entry.given)
+        }
     }
 
     /// Refuses a flag given for a kind it does not apply to.
@@ -137,6 +230,14 @@ struct SessionFieldOptions: ParsableArguments {
     /// --bucket backups` is a typed intention that cannot be carried out, and
     /// storing the session without the bucket would leave a person believing
     /// something the store does not say.
+    ///
+    /// A flag that appears in the `given` list above and in no
+    /// `flags(owning:)` list would be refused for EVERY kind, which is the
+    /// safe direction — nothing is stored half-specified — and it is not
+    /// left to be noticed by reading: the message states the owners, so an
+    /// unowned flag prints an empty list, and
+    /// `kindFTPIsAcceptedAndItsFlagsAreOfferedForItAlone` asserts the whole
+    /// sentence for both of FTP's own flags.
     func validateKindOwnership(_ kind: ConnectionKind) throws {
         for entry in kindSpecificFlags where entry.given && !entry.kinds.contains(kind) {
             throw ValidationError(
@@ -152,6 +253,15 @@ struct SessionFieldOptions: ParsableArguments {
     /// `--tag` is not here and does not need to be: `TagList.normalized`
     /// drops an empty tag on the way into `StoredSession.tags`, so
     /// `--tag ""` carries nothing rather than storing nothing-as-a-tag.
+    ///
+    /// `--initial-path` is not here for a DIFFERENT reason, and it is the
+    /// one field where an empty value is a legitimate state rather than a
+    /// mistake: blank means "whatever folder the server starts in"
+    /// (`StoredFTPConfig.initialPath` is `nil` for exactly that), so
+    /// `--initial-path ""` is how a person clears one from the command
+    /// line. Refusing it would make the field writable and not erasable —
+    /// the shape the four `@Flag`s have and state as their own limit. Both
+    /// writers below map a blank to `nil`.
     private var givenStringValues: [(flag: String, value: String)] {
         [
             ("--host", host), ("--user", user), ("--key", key),
@@ -203,8 +313,12 @@ struct SessionFieldOptions: ParsableArguments {
         case .ssh: return [("--host", host), ("--user", user)]
         case .s3: return [("--endpoint", endpoint), ("--bucket", bucket), ("--access-key", accessKey)]
         case .webdav: return [("--url", url), ("--user", user)]
-        // FTP has no flags of its own until FTP plan Task 10.
-        case .ftp: return []
+        // The HOST and nothing else. FTP's port follows the security mode
+        // when it is left out, and NEITHER credential field is required —
+        // `FTPFieldSchema.credential` marks them optional because anonymous
+        // FTP is the oldest real deployment this protocol has, and `add`
+        // must not be stricter than the form it writes records for.
+        case .ftp: return [("--host", host)]
         }
     }
 
@@ -257,15 +371,28 @@ struct SessionFieldOptions: ParsableArguments {
                 username: try required(user, "--user", for: kind),
                 useNextcloudPath: nextcloud)
         case .ftp:
-            // Refused rather than written: the flags and the required-field
-            // set for FTP are FTP plan Task 10's, and a `newSession` that
-            // writes a half-specified record is worse than one that refuses.
-            // (Withdrawn wording, verbatim: "`StoredSession` has no FTP block
-            // until FTP plan Task 8, and a session record of this kind with no
-            // block would be one nothing can dial." The block landed in Task 3,
-            // in the same commit series as this arm, so the reason was false
-            // as committed.) Task 10 replaces this arm with the real flags.
-            throw ValidationError("--kind ftp is not available from the command line yet")
+            // The two defaults are the SCHEMA's, read from it rather than
+            // written here: explicit FTPS is what a new form starts in
+            // (`FTPFieldSchema.defaults` — the safe mode is the one nobody
+            // has to choose), and the port that mode listens on is
+            // `FTPSecurityMode.defaultPort`. A `21` spelled here would be a
+            // second copy of both, and wrong for implicit FTPS.
+            //
+            // (Withdrawn wording, verbatim: "Refused rather than written:
+            // the flags and the required-field set for FTP are FTP plan
+            // Task 10's, and a `newSession` that writes a half-specified
+            // record is worse than one that refuses." Task 10 named them,
+            // and this arm writes the record.)
+            let mode = security ?? FTPFieldSchema.security(FTPFieldSchema.defaults)
+            let path = initialPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+            session.ftp = StoredFTPConfig(
+                host: try required(host, "--host", for: kind),
+                port: port ?? mode.defaultPort,
+                // Blank is anonymous FTP, not a missing field, so this one
+                // does not go through `required(_:_:for:)`.
+                username: user ?? "",
+                security: mode,
+                initialPath: (path?.isEmpty ?? true) ? nil : path)
         }
         session.tags = tag
         if let pane { session.paneVisibility = pane.visibility }
@@ -293,6 +420,15 @@ struct SessionFieldOptions: ParsableArguments {
     /// has the toggle; adding negative twins for four flags to a command line
     /// nobody has asked to turn them off from is a bigger surface than the
     /// gap.
+    ///
+    /// That contract has one edge worth stating for FTP: `--security` does
+    /// NOT move `--port` with it. `newSession` applies the new mode's
+    /// default port because nothing was there to keep; an edit has a stored
+    /// port, and silently replacing one the person typed is the
+    /// silent-wrong-port bug `FTPFieldSchema.port(_:for:)` documents. So
+    /// changing to implicit FTPS on a session saved at 21 is two flags, and
+    /// the one-flag form leaves a session that will not connect — visibly,
+    /// at the next dial, rather than invisibly in the store.
     ///
     /// `--group` is NOT applied here: filing under a group path may have to
     /// CREATE groups, which is a store write, and this function is pure so
@@ -327,6 +463,20 @@ struct SessionFieldOptions: ParsableArguments {
             if let user { webdav.username = user }
             if nextcloud { webdav.useNextcloudPath = true }
             session.webdav = webdav
+        }
+        if var ftp = session.ftp {
+            if let host { ftp.host = host }
+            if let port { ftp.port = port }
+            if let user { ftp.username = user }
+            if let security { ftp.security = security }
+            if let initialPath {
+                // Blank CLEARS it (`validateGivenValues`' note above):
+                // `nil` is "whatever folder the server starts in", which is
+                // a state a person has to be able to get back to.
+                let trimmed = initialPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                ftp.initialPath = trimmed.isEmpty ? nil : trimmed
+            }
+            session.ftp = ftp
         }
 
         // Removals first, so `--no-tag eu --tag eu` in one invocation ends

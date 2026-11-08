@@ -33,6 +33,11 @@ struct CLISecretSourcesSchemaTests {
                 ? StoredWebDAVConfig(
                     baseURL: "https://example.test/dav", username: "user",
                     useNextcloudPath: false)
+                : nil,
+            ftp: kind == .ftp
+                ? StoredFTPConfig(
+                    host: "example.test", port: 21, username: "user",
+                    security: .explicitTLS)
                 : nil)
     }
 
@@ -46,6 +51,34 @@ struct CLISecretSourcesSchemaTests {
             == "MACSCP_PASSWORD")
         #expect(BackendDescriptor.descriptor(for: .ssh).secretEnvironmentVariable
             == "MACSCP_PASSWORD")
+    }
+
+    /// FTP's variable, and the chain the CLI walks for an FTP session
+    /// (FTP plan Task 10).
+    ///
+    /// The VARIABLE is named here; no value of any kind appears in this
+    /// file. FTP authenticates with a plain password, as WebDAV does, so it
+    /// reuses the same name rather than inventing a third — which is the
+    /// claim worth pinning: the chain is read off the descriptor, and an FTP
+    /// session that fell back to no variable at all would still walk a
+    /// two-source chain and look plausible.
+    ///
+    /// **Green on arrival**, and said so rather than presented as a red
+    /// cleared: `BackendDescriptor.ftpDescriptor` named the variable when it
+    /// landed in Task 3, and `secretSources(for:passwordCommand:
+    /// keychainStore:)` reads every backend's through the same field. Its
+    /// sensitivity was measured with `scripts/mutation-probe` instead of
+    /// asserted — see FTP plan Task 10's report.
+    @Test func theSecretEnvironmentVariableIsNamedForFTP() {
+        #expect(BackendDescriptor.descriptor(for: .ftp).secretEnvironmentVariable
+            == "MACSCP_PASSWORD")
+        let chain = secretSources(
+            for: makeSession(kind: .ftp), passwordCommand: "echo x",
+            keychainStore: InMemorySecretStore())
+        #expect(chain.sources.map(\.label) == [
+            "--password-command", "environment variable MACSCP_PASSWORD", "keychain",
+        ])
+        #expect(chain.kinds == [.passwordCommand, .environment, .keychain])
     }
 
     /// A WebDAV session's chain, which had no test of its own before: same
