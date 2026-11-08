@@ -164,9 +164,9 @@ final class SessionTab: Identifiable {
     /// The command that says so, and the reason it is spelled as an ABSENCE
     /// rather than as a count. Run from the repository root:
     ///
-    ///     /usr/bin/grep -rno '\.installation\b' Sources Tests | /usr/bin/grep -v 'SessionTab.swift'
+    ///     /usr/bin/grep -rno '\.installation\b' Sources Tests | /usr/bin/grep -v 'SessionTab.swift' | /usr/bin/grep -v 'ReconnectWiringGuardTests.swift'
     ///
-    /// prints nothing and exits 1 — no file but this one reaches the
+    /// prints nothing and exits 1 — no SOURCE file but this one reaches the
     /// property. The control that says the pattern can match at all is
     /// `/usr/bin/grep -o '\.installation\b' <<< 'x.installation.y' | wc -l`,
     /// which prints 1. A TOTAL for that pattern is deliberately not written
@@ -178,10 +178,40 @@ final class SessionTab: Identifiable {
     /// travels with the command that produced it", arriving inside the
     /// sentence that cites it.
     ///
+    /// (Withdrawn wording, verbatim: "prints nothing and exits 1 — no file
+    /// but this one reaches the property." The command it described carried
+    /// one filter, `/usr/bin/grep -rno '\.installation\b' Sources Tests |
+    /// /usr/bin/grep -v 'SessionTab.swift'`, and both halves stopped being
+    /// true in fix round 4, which added the check named below: two of that
+    /// check's string literals spell the pattern, so the one-filter command
+    /// prints two lines from `ReconnectWiringGuardTests.swift` and exits 0.
+    /// Those two are an allowance entry — the one reference in this file
+    /// spelled with a receiver — and a synthetic line in the scanner's own
+    /// self-test, and neither is a reach: a test target is a different
+    /// module and this property is `private`, so no test can touch it
+    /// whatever it spells. The second filter names that file rather than
+    /// dropping `Tests` from the sweep, so every other test file is still
+    /// swept.)
+    ///
     /// A legitimate cross-file use would get a named method on `SessionTab`
     /// that forwards, the way `installSession`, `clearSession`,
     /// `cancelPermissionProbe` and `attachBucketCaches` already do — never a
     /// widened scan, and never `internal` again.
+    ///
+    /// **And such a method is itself checked, since fix round 4.** `private`
+    /// moved the hole rather than closing it: the re-review of fix round 3
+    /// added a forwarding method here that called the slot's own install
+    /// over a locally built file system, called it from
+    /// `ContentView.startSession` with the sanctioned
+    /// `tab.installSession(built, over: fs, kind: form.kind)` left PRESENT
+    /// and byte-identical inside a never-taken `if`, and it was GREEN
+    /// against 168 tests and GREEN again against the whole AppKit suite of
+    /// 3170. This file is inside every boundary the type can draw, so what
+    /// pins it is an allowance and not an access level:
+    /// `ReconnectWiringGuardTests.sessionTabReachesTheSlotOnlyWhereSanctionedHere`
+    /// holds every reference to this slot in this file, each with a count
+    /// and a reason, and is red for a reference added as well as for one
+    /// removed.
     private let installation = SessionInstallation()
     /// This tab's session, read-only from here. Installed through
     /// `installSession(_:over:kind:)`, released through `clearSession()`, and

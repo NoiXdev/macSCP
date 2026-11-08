@@ -895,6 +895,257 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    // MARK: - The one file that can reach the slot
+
+    /// One sanctioned reference to `SessionTab`'s `installation` slot.
+    private struct SanctionedSlotUse {
+        /// The line as it must read after comments and string literals are
+        /// blanked and whitespace normalized.
+        let code: String
+        /// How many times that exact line may appear in `SessionTab.swift`.
+        /// A count and not a membership test, because the violation this
+        /// allowance exists for is spelled almost exactly like a sanctioned
+        /// line: a set would absorb a second copy of the install call, and a
+        /// count refuses it.
+        let occurrences: Int
+        let reason: String
+    }
+
+    /// Every reference to `SessionTab`'s `installation` slot, with a count
+    /// and a reason each.
+    ///
+    /// **Why this exists, measured and not argued.** `SessionInstallation`'s
+    /// `session` is `private(set)` and the slot holding the type is
+    /// `private` on `SessionTab`, which together make
+    /// `installSession(_:over:kind:)` the only install — from every file but
+    /// one. `private` reduced the reach from *any file in the App target* to
+    /// *this one file*, and left this one file unmeasured. The re-review of
+    /// fix round 3 planted a forwarding method on `SessionTab` that called
+    /// the slot's own install directly, over a locally built file system and
+    /// a kind of its choosing, with the sanctioned
+    /// `tab.installSession(built, over: fs, kind: form.kind)` left PRESENT
+    /// and byte-identical inside a never-taken `if`, and `ContentView`'s
+    /// `startSession` calling the forwarder instead. It was GREEN at control
+    /// line `── control: 168 test(s) ran, 0 pre-existing failures` and GREEN
+    /// again at `── control: 3170 test(s) ran, 0 pre-existing failures` — the
+    /// whole AppKit suite, and none of it noticed. That is the F13 violation
+    /// itself: the session reaches the tab while a connection it is not over
+    /// is asked about permission editing.
+    ///
+    /// An access modifier cannot close this. The slot is `private` and lives
+    /// in `SessionTab.swift`, so `SessionTab.swift` must reach it — by
+    /// construction that file is inside every boundary the type can draw.
+    /// What closes it is the instrument `sanctionedSites` above and
+    /// `PaneVisibilityOwnershipGuardTests`' `sanctionedReads` both use: a
+    /// POSITIVE, occurrence-counted allowance, read from the file and
+    /// compared against the one literal below.
+    ///
+    /// **Eleven entries**, and the figure travels with the command that
+    /// produced it. Run from the repository root:
+    ///
+    ///     /usr/bin/grep -rn 'SanctionedSlotUse(' Tests/macSCPAppKitTests/ReconnectWiringGuardTests.swift | /usr/bin/grep -vE ':[0-9]+: *(///|//)' | /usr/bin/grep -oE 'SanctionedSlotUse\(' | wc -l
+    ///
+    /// prints **11**. `-rn` and not `-n` for the reason `sanctionedSites`'
+    /// own paragraph measured: with one path `grep -n` prints no filename,
+    /// so the middle stage's `:[0-9]+:` has nothing to anchor on and drops
+    /// nothing — including this paragraph's own command line. The control
+    /// that says the pattern can match at all is the first stage's own
+    /// output, whose remaining lines are the entries below. Re-run after
+    /// this sentence was written, because the sentence can change the
+    /// answer.
+    ///
+    /// **Comments are excluded by the instrument and not by a filter.**
+    /// `SessionTab.swift`'s own doc comments quote the slot's install, its
+    /// clear and its checksum setter, so a scan of the RAW file would read
+    /// those quotations as references. How MANY of them there are is
+    /// deliberately not written here, for the same reason the slot's own doc
+    /// comment gives for spelling its sweep as an absence rather than as a
+    /// count: it is a figure about another file's prose, and it moved inside
+    /// fix round 4 when that comment gained a paragraph about this check.
+    /// What carries the claim instead is this test passing: an unblanked
+    /// read could not pass it, because every one of those quotations would
+    /// arrive as a key the allowance below does not hold. The scan reads
+    /// `SourceCorpus.code(of:)`, which blanks comments and string literals
+    /// length-preservingly, the way `declaredSurface` does — proven in both
+    /// directions by fix round 3's plants, a declaration commented out being
+    /// GREEN and the same text uncommented being RED.
+    ///
+    /// **Scope fence.** This covers references to `installation` in
+    /// `SessionTab.swift`. Every OTHER file is covered by the slot's own
+    /// `private` and by the absence sweep the slot's doc comment carries,
+    /// and this check does not try to tell a legitimate forwarder from an
+    /// illegitimate one by shape. Anything the allowance admits is admitted
+    /// deliberately, and the reason beside it is the answer to the next
+    /// contributor's "may I add one?".
+    private static let sessionTabSlotUses: [SanctionedSlotUse] = [
+        SanctionedSlotUse(
+            code: "private let installation = SessionInstallation()",
+            occurrences: 1,
+            reason:
+                "The slot's own declaration. `private`, which is what makes this file the whole of its reach, and `let`, so the slot itself cannot be swapped out."),
+        SanctionedSlotUse(
+            code: "var session: BrowserSession? { installation.session }",
+            occurrences: 1,
+            reason:
+                "`SessionTab.session`'s getter — the read-only way out, and the reason nothing else in the App layer needs the slot in order to read a session."),
+        SanctionedSlotUse(
+            code: "installation.setShowsFiles(newValue)",
+            occurrences: 1,
+            reason:
+                "`SessionTab.showsFiles`'s setter, forwarding the one way IN for the pane-visibility flag. The write it reaches is the one `PaneVisibilityOwnershipGuardTests` sanctions on the other side."),
+        SanctionedSlotUse(
+            code: "var permissionProbe: Task<Void, Never>? { installation.permissionProbe }",
+            occurrences: 1,
+            reason:
+                "`SessionTab.permissionProbe`'s getter, read so a teardown and a test can await the probe that was cancelled. A read, so it takes no half of the install."),
+        SanctionedSlotUse(
+            code: "self.installation.setChecksums(newValue, for: side)",
+            occurrences: 1,
+            reason:
+                "`checksumLedgerBinding(for:)`'s write into the installed session's checksum ledger, inside a `Binding` setter closure that needs the explicit `self`. The only reference in this file spelled with a receiver."),
+        SanctionedSlotUse(
+            code: "installation.install(built, over: fileSystem, kind: kind)",
+            occurrences: 1,
+            reason:
+                "`installSession(_:over:kind:)`'s own call — THE install, the operation no caller may take half of. A SECOND line spelled this way is the violation F13 named, and the count is what refuses it: the forwarder the re-review planted spelled almost this line."),
+        SanctionedSlotUse(
+            code: "installation.cancelPermissionProbe()",
+            occurrences: 1,
+            reason:
+                "`cancelPermissionProbe()`'s forward, called by `TabTeardown.run(_:reason:)` before the stage that closes the connection."),
+        SanctionedSlotUse(
+            code: "installation.clear()",
+            occurrences: 1,
+            reason:
+                "`clearSession()`'s forward — the release half, which `TabTeardown.run(_:reason:)` owns. A second line spelled this way would be a second release path, which is the hole fix round 3 closed on the other side of the boundary."),
+        SanctionedSlotUse(
+            code: "installation.setObjectLockStates(objectLockStates)",
+            occurrences: 1,
+            reason:
+                "`attachBucketCaches(objectLockStates:bucketVersioning:)`, one named field pass-through of two. Named rather than a general mutator, because a mutator taking `inout BrowserSession` is a second way to install one."),
+        SanctionedSlotUse(
+            code: "installation.setBucketVersioning(bucketVersioning)",
+            occurrences: 1,
+            reason:
+                "`attachBucketCaches(objectLockStates:bucketVersioning:)`, the other one, for the same reason."),
+        SanctionedSlotUse(
+            code: "await installation.recordPermissionEditing(",
+            occurrences: 1,
+            reason:
+                "The permission question `SessionTab.recordPermissionEditing(of:kind:forSession:)` forwards — the half that makes the install inseparable. Only the head line is a reference: its continuation line names no receiver."),
+    ]
+
+    /// The R1 check: `SessionTab.swift` reaches the slot exactly where this
+    /// allowance says it does, exactly as often.
+    ///
+    /// Red in BOTH directions, which is what a count buys over a membership
+    /// test and what a positive check buys over a `!contains`. A twelfth
+    /// reference — a forwarding method that installs, clears or mutates
+    /// behind the one that asks — is a key the allowance does not hold. A
+    /// reference that DISAPPEARS is red too: the allowance has stopped
+    /// describing the code, and an allowance nobody notices has stopped
+    /// being read.
+    ///
+    /// The two expectations above the comparison are the positives it owes:
+    /// a floor, so the comparison cannot be satisfied by two empty tallies
+    /// after the file moves or the scan breaks, and the slot's own
+    /// declaration, so what is being compared is this file's reach into this
+    /// slot and not some other file's into nothing.
+    @Test func sessionTabReachesTheSlotOnlyWhereSanctionedHere() throws {
+        let found = try Self.slotReferences(
+            inFileAt: Self.file("Sources/MacSCPAppKit/SessionTab.swift"))
+        var declared: [String: Int] = [:]
+        for use in Self.sessionTabSlotUses { declared[use.code, default: 0] += use.occurrences }
+
+        #expect(found.count >= 8, """
+            only \(found.count) distinct reference(s) to `installation` found in \
+            SessionTab.swift — the scan is not reading the file, and the comparison below \
+            is comparing nothing.
+            """)
+        #expect(found["private let installation = SessionInstallation()"] == 1, """
+            the scan no longer finds the slot's own declaration in SessionTab.swift; \
+            whatever it is comparing, it is not this file's reach into this slot.
+            """)
+
+        let unsanctioned = found.filter { declared[$0.key] != $0.value }
+            .map { "\($0.key) ×\($0.value)" }.sorted()
+        let missing = declared.filter { found[$0.key] != $0.value }
+            .map { "\($0.key) ×\($0.value)" }.sorted()
+        let reasons = Self.sessionTabSlotUses
+            .map { "  \($0.code) ×\($0.occurrences) — \($0.reason)" }
+            .joined(separator: "\n")
+        #expect(found == declared, """
+            `SessionTab.swift`'s reach into the `installation` slot has changed.
+            found, with a count this allowance does not state: \(unsanctioned)
+            sanctioned, with a count the file does not have: \(missing)
+
+            This file is the ONE file that can reach that slot: it is `private`, so every \
+            other file in the App target is refused by the compiler. Anything here can \
+            call the slot's own `install` — putting a `BrowserSession` on the tab while \
+            a connection it is not over is asked about permission editing, which is the \
+            half of the operation `installSession(_:over:kind:)` exists to make \
+            inseparable — or its `clear`, taking a session off outside \
+            `TabTeardown.run(_:reason:)`. A new reference is a security decision: add it \
+            here WITH a reason, and expect that addition to be read as one. A reference \
+            that is GONE is one too, because the allowance has stopped describing the \
+            code.
+
+            Sanctioned today:
+            \(reasons)
+            """)
+    }
+
+    /// Every line of `file` whose CODE references the identifier
+    /// `installation`, normalized and tallied.
+    ///
+    /// `SourceCorpus.code(of:)` and not `text(of:)`: this file's own doc
+    /// comments quote the slot's install and its clear, and a scanner cannot
+    /// tell a quotation from the code it quotes (CLAUDE.md,
+    /// "Source-scanning guards read comments too"). A POSITIVE check can
+    /// take the stricter view that also blanks string literals, because a
+    /// string cannot call a method: there is no read for the blanking to
+    /// lose, which is the trade a negative check cannot make.
+    private static func slotReferences(inFileAt file: URL) throws -> [String: Int] {
+        var tally: [String: Int] = [:]
+        for line in try SourceCorpus.code(of: file).components(separatedBy: "\n")
+        where referencesTheSlot(line) {
+            tally[normalized(line), default: 0] += 1
+        }
+        return tally
+    }
+
+    /// Whether `line` names the identifier `installation` at both of its
+    /// boundaries. `SessionInstallation` does not match — its `I` is capital
+    /// — and neither does `installations` or `reinstallation`, so the slot's
+    /// own declaration line matches once for the slot and not for its type.
+    private static func referencesTheSlot(_ line: String) -> Bool {
+        let characters = Array(line)
+        let needle = Array("installation")
+        guard characters.count >= needle.count else { return false }
+        func isIdentifierCharacter(_ character: Character) -> Bool {
+            character.isLetter || character.isNumber || character == "_"
+        }
+        for index in 0...(characters.count - needle.count) {
+            guard characters[index..<(index + needle.count)].elementsEqual(needle) else { continue }
+            if index > 0, isIdentifierCharacter(characters[index - 1]) { continue }
+            let after = index + needle.count
+            if after < characters.count, isIdentifierCharacter(characters[after]) { continue }
+            return true
+        }
+        return false
+    }
+
+    /// The scanner reacts, over synthetic lines: the shapes it is about, and
+    /// the two near-misses that must not be references.
+    @Test func theSlotScannerFlagsAReferenceAndNotItsType() {
+        #expect(Self.referencesTheSlot("        installation.install(built, over: fs, kind: k)"))
+        #expect(Self.referencesTheSlot("    private let installation = SessionInstallation()"))
+        #expect(Self.referencesTheSlot("        self.installation.clear()"))
+        #expect(Self.referencesTheSlot("        let x = SessionInstallation()") == false)
+        #expect(Self.referencesTheSlot("        var installations: [Int] = []") == false)
+        #expect(Self.referencesTheSlot("        let reinstallation = 1") == false)
+    }
+
     /// The walk itself has to be believable, or both tests above pass by
     /// scanning nothing. Checked against a floor and a known member rather
     /// than an exact count, so adding a source file is not a test edit.
