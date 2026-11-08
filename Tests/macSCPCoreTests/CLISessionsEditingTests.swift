@@ -1109,14 +1109,24 @@ struct CLISessionsStoreEditingGuardTests {
             as ParsableArguments above.
             """)
         // FTP's half of that table is DERIVED, not written out: the flags
-        // are the image of `FTPField.allCases` under the file's own
-        // `flag(for:)`. A build that spelled them instead would still pass
-        // every behavioural case in the suite above, and the next field
+        // are the image of FTP's field enumeration under the file's own
+        // `flag(for:)`. A build that spelled them instead would leave the
+        // flag list free to fall behind the field list, and the next field
         // added to `FTPFieldSchema` would be the one nobody noticed.
-        #expect(source.contains("FTPField.allCases"), """
-            SessionFieldOptions.swift no longer reads FTP's flags off \
-            FTPField.allCases — the flag list and the field list can now \
-            disagree without anything saying so.
+        //
+        // The anchor is the CALL, not the type's name. It was the name
+        // until the probe below: a mutation that replaced the real call
+        // with a written-out list of four flags left this check GREEN,
+        // because `flag(for:)`'s own doc comment quoted the name and the
+        // scan read the comment (`scripts/mutation-probe`, 2026-11-08,
+        // label "FTP's flag list is spelled out and drops --security":
+        // caught by `kindFTPIsAcceptedAndItsFlagsAreOfferedForItAlone` and
+        // `editChangesAnFTPSessionsOwnFields`, not by this). The comment
+        // there no longer spells it, and this reads the expression.
+        #expect(source.contains("FTPField.allCases.compactMap("), """
+            SessionFieldOptions.swift no longer maps over FTP's field cases \
+            to build its flag list — the flag list and the field list can \
+            now disagree without anything saying so.
             """)
     }
 

@@ -139,8 +139,19 @@ struct SessionFieldOptions: ParsableArguments {
     /// not compile until someone says whether it has a flag here. That is
     /// this project's rule about a guard spelling a symbol it could read
     /// instead, applied to the ownership table below — FTP's column is the
-    /// image of `FTPField.allCases` under this function, not a second copy
-    /// of the field list.
+    /// image of every case of that enum under this function, not a second
+    /// copy of the field list.
+    ///
+    /// The sentence above deliberately does NOT spell the expression that
+    /// enumerates those cases, and the reason is measured rather than
+    /// stylistic: `CLISessionsStoreEditingGuardTests
+    /// .theFieldOptionsFileExistsAndCarriesTheKindOwnershipTable` scans this
+    /// file for that expression, and while this comment quoted it the scan
+    /// was satisfied by the COMMENT. A probe that replaced the real call
+    /// with a written-out list of four flags was caught by two behavioural
+    /// cases and NOT by the scan (`scripts/mutation-probe`, 2026-11-08, FTP
+    /// plan Task 10). CLAUDE.md's "Source-scanning guards read comments
+    /// too", happening in the same commit as the guard it is about.
     ///
     /// `username` is `--user`, the flag SSH and WebDAV already carry for the
     /// same thing; a third spelling of one concept is what sharing it
