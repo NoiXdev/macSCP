@@ -34,7 +34,7 @@ struct CrossSessionTargetsTests {
         to tab: SessionTab, remotePath: String, remoteFS: any RemoteFileSystem = LocalFileSystem()
     ) {
         let sessionID = UUID()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -45,6 +45,7 @@ struct CrossSessionTargetsTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: remotePath)
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 
     /// A tab never offers itself as a transfer destination — "copy to

@@ -48,7 +48,7 @@ struct ComparisonOwnershipTests {
     /// system, so a walk over a temporary directory needs no network.
     private func attachSession(to tab: SessionTab, remoteFS: any RemoteFileSystem) {
         let sessionID = UUID()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -59,6 +59,7 @@ struct ComparisonOwnershipTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 
     /// The file system is created HERE and tracked weakly, so this function's

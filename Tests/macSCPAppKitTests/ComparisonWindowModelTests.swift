@@ -38,7 +38,7 @@ struct ComparisonWindowModelTests {
             maxConcurrent: 2)
         let sessionID = UUID()
         let remote = LocalFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remote,
@@ -49,6 +49,7 @@ struct ComparisonWindowModelTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
         return tab
     }
 

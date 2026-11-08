@@ -2018,7 +2018,7 @@ struct LivenessProbeDropIntegrationTests {
         let sessionID = UUID()
         let counted = ProbeTargetStatCounter(
             wrapping: remoteFS, countingStatsOf: homePath)
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: counted,
@@ -2028,6 +2028,7 @@ struct LivenessProbeDropIntegrationTests {
             terminal: TerminalPanelViewModel(openShell: shellOpener),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: homePath)
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
         tab.liveness = .connected
         return counted
     }

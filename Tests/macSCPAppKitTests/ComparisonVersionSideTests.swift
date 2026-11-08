@@ -189,13 +189,14 @@ struct ComparisonVersionSideTests {
             certificateBridge: CertificatePromptBridge(), limiter: BandwidthLimiter(),
             maxConcurrent: 2)
         let sessionID = UUID()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID, localFS: LocalFileSystem(), remoteFS: remote,
             local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
             remote: RemoteBrowserViewModel(fs: remote, startPath: "/"),
             terminal: TerminalPanelViewModel(openShell: { _, _, _ in throw CancellationError() }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
         return tab
     }
 

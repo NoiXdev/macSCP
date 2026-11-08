@@ -366,6 +366,16 @@ struct ReconnectWiringGuardTests {
         ChokePoint(
             pattern: #"\binstallSession\b"#,
             describes: "installing a built session on a tab"),
+        // The release half, added in fix round 2 of Task 8 when the write it
+        // replaces stopped compiling: `tab.session = nil` was a sanctioned
+        // site of the assignment pattern below, and `session` is no longer
+        // writable outside `SessionInstallation.swift`, so a teardown asks
+        // for the named clear path instead. Without this entry the App layer
+        // would have gained an unscanned way to take a session off a tab,
+        // which is half of what the assignment pattern exists for.
+        ChokePoint(
+            pattern: #"\bclearSession\b"#,
+            describes: "releasing a tab's session"),
         ChokePoint(
             pattern: #"\bBrowserSession\s*(?:\(|\.init\b)"#,
             describes: "constructing a session"),
@@ -534,10 +544,20 @@ struct ReconnectWiringGuardTests {
             occurrences: 1,
             reason: "`connect(in:stored:)` — the stored-session path's hand-off, behind its own attempt-token check."),
         SanctionedSite(
-            file: "Sources/MacSCPAppKit/TabTeardown.swift",
-            code: "tab.session = nil",
+            file: "Sources/MacSCPAppKit/SessionInstallation.swift",
+            code: "session = nil",
             occurrences: 1,
-            reason: "`TabTeardown.run(_:reason:)` releasing the session — the only other writer of that property. It moved out of `ContentView.teardown(_:reason:)` in the Quit Teardown plan, Task 1, so a delegate with no view could reach the same one sequence."),
+            reason: "`SessionInstallation.clear()` — the one write that takes a session off a tab, in the one file that can write the property at all. (Withdrawn wording, verbatim: the site was `tab.session = nil` in `Sources/MacSCPAppKit/TabTeardown.swift`, sanctioned as \"`TabTeardown.run(_:reason:)` releasing the session — the only other writer of that property. It moved out of `ContentView.teardown(_:reason:)` in the Quit Teardown plan, Task 1, so a delegate with no view could reach the same one sequence.\" That write no longer compiles: fix round 2 of Task 8 moved the storage behind `SessionInstallation`, whose `session` is `private(set)`, so the teardown now calls `clearSession()` and the two sites below replace the one above.)"),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/SessionTab.swift",
+            code: "func clearSession() {",
+            occurrences: 1,
+            reason: "The named clear path's declaration on the tab, which forwards to `SessionInstallation.clear()`. Sanctioned as a declaration only: its one caller is the line below."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/TabTeardown.swift",
+            code: "tab.clearSession()",
+            occurrences: 1,
+            reason: "`TabTeardown.run(_:reason:)` releasing the session — the same site the withdrawn `tab.session = nil` above was, in the same function and for the same reason, spelled as a call because the property is no longer writable from this file."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "return LostConnectionContent(",

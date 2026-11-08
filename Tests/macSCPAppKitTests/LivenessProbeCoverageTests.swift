@@ -30,7 +30,7 @@ struct LivenessProbeCoverageTests {
     private func attachSession(to tab: SessionTab) {
         let sessionID = UUID()
         let remoteFS = LocalFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -41,6 +41,7 @@ struct LivenessProbeCoverageTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 
     @Test func everyConnectedTabIsIncludedRegardlessOfWhichIsActive() {

@@ -132,7 +132,19 @@ struct BrowserSession {
 final class SessionTab: Identifiable {
     let id = UUID()
     let connectionViewModel: ConnectionViewModel
-    var session: BrowserSession?
+    /// The session slot, and the one place a `BrowserSession` can be put on
+    /// this tab. `let`, so the slot itself cannot be swapped out.
+    ///
+    /// Its `session` is `private(set)` inside `SessionInstallation.swift`,
+    /// which is what makes `installSession(_:over:kind:)` below the only
+    /// install: a write from here, or from anywhere else in the App layer,
+    /// does not compile. See that type's doc comment for why the boundary is
+    /// a file and what it does not cover.
+    let installation = SessionInstallation()
+    /// This tab's session, read-only from here. Installed through
+    /// `installSession(_:over:kind:)`, released through `clearSession()`,
+    /// changed in place through `changeSession(_:)`.
+    var session: BrowserSession? { installation.session }
     let transferQueue = TransferQueueViewModel()
     let conflictBridge = ConflictPromptBridge()
     /// The folder comparisons running or finished on this tab's connection
@@ -238,7 +250,7 @@ final class SessionTab: Identifiable {
                 assertionFailure("pane visibility written on a tab with no session")
                 return
             }
-            session?.showsFiles = newValue
+            installation.setShowsFiles(newValue)
         }
     }
     /// Display name while connected (stored session name or "user@host").
@@ -330,12 +342,12 @@ final class SessionTab: Identifiable {
     var isConnected: Bool { session != nil }
 
     /// The task asking this tab's connection whether it will take a
-    /// permission change, started by `installSession(_:over:kind:)`. Kept so a test can
-    /// await it and a second install can cancel the first; not observable
-    /// state, and not owned by teardown (it ends when the question is
-    /// answered, and its write is refused for any session but the one it was
-    /// asked about).
-    @ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?
+    /// permission change, started by `installSession(_:over:kind:)`. Kept so
+    /// a test can await it and a second install can cancel the first; not
+    /// observable state, and not owned by teardown (it ends when the
+    /// question is answered, and its write is refused for any session but
+    /// the one it was asked about).
+    var permissionProbe: Task<Void, Never>? { installation.permissionProbe }
 
     /// This tab's connection liveness (Task 4; fix round 1 moved it here
     /// from `BrowserSession`). `nil` before the first connect attempt.
@@ -888,10 +900,7 @@ extension SessionTab {
             },
             set: { [weak self] newValue in
                 guard let self, self.session?.id == sessionID else { return }
-                switch side {
-                case .local: self.session?.localChecksums = newValue
-                case .remote: self.session?.remoteChecksums = newValue
-                }
+                self.installation.setChecksums(newValue, for: side)
             })
     }
 
@@ -916,13 +925,30 @@ extension SessionTab {
     func installSession(
         _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind
     ) {
-        permissionProbe?.cancel()
-        session = built
-        let sessionID = built.id
-        permissionProbe = Task { [weak self] in
-            await self?.recordPermissionEditing(
-                of: fileSystem, kind: kind, forSession: sessionID)
-        }
+        installation.install(built, over: fileSystem, kind: kind)
+    }
+
+    /// Releases this tab's session, and the permission probe with it.
+    ///
+    /// The named clear path, in place of the `tab.session = nil` that
+    /// `TabTeardown.run(_:reason:)` used to write: the property is no longer
+    /// writable from outside `SessionInstallation.swift`, and an exemption
+    /// for one writer would have been the hole this round closed.
+    func clearSession() {
+        installation.clear()
+    }
+
+    /// The two bucket caches `ContentView.startSession` attaches right after
+    /// the install (`BrowserSession.objectLockStates`, `.bucketVersioning`).
+    ///
+    /// Named pass-throughs rather than a general mutator, for the reason
+    /// `SessionInstallation`'s own "per-field writes" comment measured: a
+    /// mutator taking `inout BrowserSession` is a second way to install one.
+    func attachBucketCaches(
+        objectLockStates: ObjectLockStateCache?, bucketVersioning: BucketVersioningCache?
+    ) {
+        installation.setObjectLockStates(objectLockStates)
+        installation.setBucketVersioning(bucketVersioning)
     }
 
     /// Asks the connection whether it will take a permission change, and
@@ -949,8 +975,7 @@ extension SessionTab {
     func recordPermissionEditing(
         of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID
     ) async {
-        let offered = await PermissionsAvailability.isOffered(for: kind, on: fileSystem)
-        guard session?.id == sessionID else { return }
-        session?.permissionEditing = offered
+        await installation.recordPermissionEditing(
+            of: fileSystem, kind: kind, forSession: sessionID)
     }
 }

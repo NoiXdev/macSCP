@@ -101,7 +101,7 @@ struct LivenessProbeCauseTests {
     private func attachSession(to tab: SessionTab, stat: ScriptedStatFileSystem.Behaviour) {
         let sessionID = UUID()
         let remoteFS = ScriptedStatFileSystem(behaviour: stat)
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -112,6 +112,7 @@ struct LivenessProbeCauseTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 }
 
@@ -177,7 +178,7 @@ struct CloseReportTeardownTests {
             maxConcurrent: 2)
         let sessionID = UUID()
         let remoteFS = ReportingFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -186,6 +187,7 @@ struct CloseReportTeardownTests {
             terminal: TerminalPanelViewModel(openShell: { _, _, _ in throw CancellationError() }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
 
         #expect(remoteFS.stopped == false)
         await TabTeardown.run(tab, reason: .userRequested)

@@ -2221,15 +2221,22 @@ struct ContentView: View {
         // (Ruling T7.1 of the FTP plan): see `SessionTab.installSession`. Not awaited.
         tab.installSession(built, over: fs, kind: form.kind)
         // Which buckets of this connection have Object Lock, read lazily and
-        // kept for the session (S3 bucket settings, Task 10). Only a
-        // connection that has the bucket-settings capability gets one; it is
-        // set here, once, so it dies with the session and a reconnect starts
-        // from nothing (`BrowserSession.objectLockStates`).
-        tab.session?.objectLockStates = BrowserSession.objectLockStates(for: fs)
-        // The same for each bucket's versioning state
-        // (`BrowserSession.bucketVersioning`), which the version history's
-        // menu row and sheet read.
-        tab.session?.bucketVersioning = BrowserSession.bucketVersioning(for: fs)
+        // kept for the session (S3 bucket settings, Task 10), and the same
+        // for each bucket's versioning state, which the version history's
+        // menu row and sheet read. Only a connection that has the
+        // bucket-settings capability gets either; they are set here, once, so
+        // they die with the session and a reconnect starts from nothing
+        // (`BrowserSession.objectLockStates`, `.bucketVersioning`).
+        //
+        // One call for the two of them, not two `tab.session?.… =` writes:
+        // `session` is no longer writable outside
+        // `SessionInstallation.swift` (Ruling T8.8), and that type exposes a
+        // named setter per field rather than a mutator a quiet install could
+        // be written with — see its own "per-field writes" comment for the
+        // plant that measured the difference.
+        tab.attachBucketCaches(
+            objectLockStates: BrowserSession.objectLockStates(for: fs),
+            bucketVersioning: BrowserSession.bucketVersioning(for: fs))
         // The remote pane's source of deleted files (S3 version history,
         // Task 10): present only for a connection that keeps a history, so a
         // pane over any other backend takes the "show deleted files" switch

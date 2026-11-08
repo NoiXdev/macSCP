@@ -230,12 +230,26 @@ struct PermissionsSurfaceGuardTests {
             ContentView.swift never installs a session through `tab.installSession(`, so nothing \
             asks the connection and `permissionEditing` stays at its default.
             """)
-        // The negative beside it: the session is no longer assigned directly
-        // on that path, which would install one without asking.
-        let assignsDirectly = content.contains("tab.session = built")
-        #expect(assignsDirectly == false, """
-            ContentView.swift assigns the built session to `tab.session` itself, which \
-            installs it without asking the connection.
-            """)
+        // No negative check stands beside the two above any more, and that
+        // is the point: the compiler holds the property now. `session` is
+        // `private(set)` inside `SessionInstallation.swift`, so a direct
+        // assignment on this path — or anywhere else in the App layer —
+        // does not compile, and a check describing a violation that cannot
+        // be written is a comment that runs (CLAUDE.md, "a negative check
+        // whose SPAN is wrong can never match, and reads like one that is
+        // satisfied"). What keeps the boundary from being DELETED silently
+        // is the positive half: `installs` above, and
+        // `ReconnectWiringGuardTests
+        // .everySanctionedSiteStillExistsExactlyAsOftenAsDeclared`, which
+        // requires the install call to be present exactly once.
+        //
+        // (Withdrawn wording, verbatim: the check removed here was
+        // `let assignsDirectly = content.contains("tab.session = built")`
+        // with `#expect(assignsDirectly == false, …)`, commented "The
+        // negative beside it: the session is no longer assigned directly on
+        // that path, which would install one without asking." It caught
+        // exactly one spelling: the re-review of fix round 1 walked past it
+        // with a one-line `installQuietly(_:)` and came back GREEN against
+        // 8416 test functions.)
     }
 }

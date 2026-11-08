@@ -67,7 +67,7 @@ struct TabRegistryTests {
     /// back later.
     private func attachSession(to tab: SessionTab, remoteFS: any RemoteFileSystem) {
         let sessionID = UUID()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -78,6 +78,7 @@ struct TabRegistryTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 
     // MARK: - Basic lookups

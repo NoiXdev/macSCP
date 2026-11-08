@@ -179,7 +179,7 @@ struct LivenessProbeCancellationTests {
     private func attachSession(to tab: SessionTab) -> NeverRespondingFileSystem {
         let sessionID = UUID()
         let remoteFS = NeverRespondingFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -190,6 +190,7 @@ struct LivenessProbeCancellationTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
         return remoteFS
     }
 }

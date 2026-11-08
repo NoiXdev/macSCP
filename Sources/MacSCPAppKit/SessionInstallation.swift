@@ -1,0 +1,148 @@
+import Foundation
+import Observation
+import macSCPCore
+
+/// A tab's session slot, and the asking that comes with filling it.
+///
+/// **A type in a file of its own, and that is the whole mechanism.** The
+/// property it holds is `private(set)`, so the only code that can put a
+/// `BrowserSession` anywhere is the code in this file, and the only entry
+/// point this file offers for putting one there is `install(_:over:kind:)`,
+/// whose body also starts the probe that asks the connection whether it will
+/// take a permission change (Ruling T7.1 of the FTP plan). Installing a
+/// session and asking its connection are therefore one operation that no
+/// caller can take half of — not because a scan says so, but because the
+/// other half does not compile.
+///
+/// Why it is not a `private(set)` on `SessionTab` itself, which is where
+/// Ruling T8.8 first pointed: `private` in Swift is FILE-scoped, and the
+/// plant this exists to refuse was written inside `SessionTab.swift` — a
+/// one-line `installQuietly(_:)` that assigns the session and asks nothing,
+/// with the sanctioned `installSession(…)` call left in place but made
+/// unreachable. Measured against `private(set) var session` on `SessionTab`:
+/// that plant still compiles, because it is in the same file as the property.
+/// Moved here it does not, and the diagnostic is
+/// `cannot assign to property: 'session' is a get-only property` at the
+/// forwarding accessor's file, or `'session' setter is inaccessible` at a
+/// direct write.
+///
+/// **What this does not close, stated rather than implied.** Swift's
+/// narrowest access scope is a file, so a function added to THIS file can
+/// still write the property. What that buys is not a guarantee but a place
+/// to look: this file exists for one statement sequence, is named after it,
+/// and has no other reason to grow. The residual is the same one every
+/// capability boundary in this project carries, and
+/// `ReconnectWiringGuardTests`' own "what this guard cannot see" is where
+/// that kind of limit is recorded.
+@MainActor
+@Observable
+final class SessionInstallation {
+    /// The installed session, or `nil` while this tab is not connected.
+    ///
+    /// `private(set)`, which here means "written in this file only" — see the
+    /// type's own doc comment for why the file boundary is the mechanism.
+    private(set) var session: BrowserSession?
+
+    /// The task asking this tab's connection whether it will take a
+    /// permission change. Kept so a test can await it, so a second install
+    /// can cancel the first, and so `TabTeardown.run(_:reason:)` can cancel
+    /// it when the tab's connection goes away; not observable state.
+    @ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?
+
+    /// Installs `built` and asks its connection about permission editing.
+    ///
+    /// The probe is started, not awaited: a server that answers `SITE HELP`
+    /// slowly must not hold the browser back, and until the answer lands the
+    /// editor is offered as it always was. The answer is written only to the
+    /// session it was asked about (`recordPermissionEditing`), which is what
+    /// makes a late first answer harmless to a second session.
+    func install(
+        _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind
+    ) {
+        permissionProbe?.cancel()
+        session = built
+        let sessionID = built.id
+        permissionProbe = Task { [weak self] in
+            await self?.recordPermissionEditing(
+                of: fileSystem, kind: kind, forSession: sessionID)
+        }
+    }
+
+    /// Asks the connection whether it will take a permission change, and
+    /// records the answer on the session it was asked for.
+    ///
+    /// The question is `PermissionsAvailability.isOffered(for:on:)`: the
+    /// capability first, then the connection's own probe where it has one --
+    /// for FTP, whether the server has `SITE CHMOD`.
+    ///
+    /// **The write is refused unless the session is still the one that was
+    /// asked about.** The probe may be a round trip, and a tab can be torn
+    /// down and reconnected inside it; an answer about the old connection
+    /// written onto the new one would hide, or offer, an editor on a server
+    /// the question was never put to. `id` is compared, as
+    /// `SessionTab.checksumLedgerBinding` compares it, for the same reason.
+    func recordPermissionEditing(
+        of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID
+    ) async {
+        let offered = await PermissionsAvailability.isOffered(for: kind, on: fileSystem)
+        guard session?.id == sessionID else { return }
+        session?.permissionEditing = offered
+    }
+
+    /// Releases the session, and the probe with it.
+    ///
+    /// The named clear path `TabTeardown.run(_:reason:)` uses in place of the
+    /// `tab.session = nil` it used to write. A separate entry point rather
+    /// than an exemption on the installer: releasing a session and installing
+    /// one are different operations, and only one of them owes the
+    /// connection a question.
+    func clear() {
+        permissionProbe?.cancel()
+        session = nil
+    }
+
+    // MARK: - The per-field writes
+
+    /// One named method per per-session field that is written AFTER the
+    /// install, and NO general-purpose mutator, which is the part that was
+    /// measured rather than reasoned.
+    ///
+    /// `BrowserSession` is a struct, so `session?.field = value` from outside
+    /// this file needs the setter this type does not expose; something has to
+    /// stand in for it. The first draft of that something was
+    /// `change(_ body: (inout BrowserSession) -> Void)`, and it reopened
+    /// exactly the hole this type exists to close: `inout BrowserSession`
+    /// also accepts `$0 = built`, so `installQuietly(_:)` could be written
+    /// as `changeSession { $0 = built }`. Planted through
+    /// `scripts/mutation-probe` in the foreground against
+    /// `PermissionsAvailabilityTests|PermissionsSurfaceGuardTests|ObjectLockSheetTests|PermissionEditingRecordTests|ReconnectWiringGuardTests`
+    /// (control: `161 test(s) ran, 0 pre-existing failures`), with the
+    /// sanctioned `tab.installSession(…)` call left present but unreachable:
+    /// **GREEN**. The argument written in its place — that with nothing
+    /// installed the call is a no-op, so "every assertion about a connected
+    /// tab fails" — was a prediction, and the run falsified it.
+    ///
+    /// A field setter cannot install: it takes the field's own type, so
+    /// there is no spelling of it that carries a whole session. The cost is
+    /// that a new per-session field written after the install needs a line
+    /// here, and that is the intended cost — it is one line in the file a
+    /// reviewer reads for exactly this question.
+    func setShowsFiles(_ value: Bool) {
+        session?.showsFiles = value
+    }
+
+    func setChecksums(_ ledger: ChecksumLedger, for side: BrowserPaneSide) {
+        switch side {
+        case .local: session?.localChecksums = ledger
+        case .remote: session?.remoteChecksums = ledger
+        }
+    }
+
+    func setObjectLockStates(_ cache: ObjectLockStateCache?) {
+        session?.objectLockStates = cache
+    }
+
+    func setBucketVersioning(_ cache: BucketVersioningCache?) {
+        session?.bucketVersioning = cache
+    }
+}

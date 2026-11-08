@@ -54,20 +54,21 @@ struct PermissionEditingRecordTests {
     /// Attaches a session over `fileSystem` and returns its id. The shape
     /// `ContentView.startSession` builds, with a local file system standing
     /// in for the local side.
-    private func attachSession(to tab: SessionTab, over fileSystem: any RemoteFileSystem) -> UUID {
-        let sessionID = UUID()
-        tab.session = BrowserSession(
-            id: sessionID,
-            localFS: LocalFileSystem(),
-            remoteFS: fileSystem,
-            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSHomeDirectory()),
-            remote: RemoteBrowserViewModel(fs: fileSystem, startPath: "/"),
-            terminal: TerminalPanelViewModel(openShell: { _, _, _ in
-                throw CancellationError()
-            }),
-            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
-            homePath: "/")
-        return sessionID
+    ///
+    /// Through `installSession`, because that is the only way a
+    /// `BrowserSession` reaches a tab since fix round 2 of Task 8 — the
+    /// property is `private(set)` inside `SessionInstallation.swift`. And it
+    /// AWAITS the probe the install starts, so the cases below that then ask
+    /// `recordPermissionEditing` a question of their own are not racing an
+    /// install's answer: without the await, whether the probe's write lands
+    /// before or after the case's own is decided by the scheduler.
+    private func attachSession(
+        to tab: SessionTab, over fileSystem: any RemoteFileSystem
+    ) async -> UUID {
+        let installed = built(over: fileSystem, tab: tab)
+        tab.installSession(installed, over: fileSystem, kind: .ftp)
+        await tab.permissionProbe?.value
+        return installed.id
     }
 
     private func built(over fileSystem: any RemoteFileSystem, tab: SessionTab) -> BrowserSession {
@@ -133,7 +134,13 @@ struct PermissionEditingRecordTests {
     /// probe existed; the answer can only take the offer away.
     @Test func aFreshSessionOffersTheEditorUntilTheConnectionHasAnswered() {
         let tab = makeTab()
-        _ = attachSession(to: tab, over: ProbedFileSystem(answer: false))
+        let fileSystem = ProbedFileSystem(answer: false)
+        tab.installSession(built(over: fileSystem, tab: tab), over: fileSystem, kind: .ftp)
+        // Not an `async` case, deliberately: with no suspension point
+        // between the install and the read, the probe this install started
+        // cannot have run, which is what "until the connection has answered"
+        // means. `attachSession` above awaits it, so it is the wrong helper
+        // for this one case.
         #expect(tab.session?.permissionEditing == true)
     }
 
@@ -142,7 +149,7 @@ struct PermissionEditingRecordTests {
     @Test func aConnectionThatWillNotTakeAChangeTakesTheOfferAway() async {
         let tab = makeTab()
         let fileSystem = ProbedFileSystem(answer: false)
-        let id = attachSession(to: tab, over: fileSystem)
+        let id = await attachSession(to: tab, over: fileSystem)
 
         await tab.recordPermissionEditing(of: fileSystem, kind: .ftp, forSession: id)
 
@@ -152,7 +159,7 @@ struct PermissionEditingRecordTests {
     @Test func aConnectionThatWillTakeAChangeKeepsTheOffer() async {
         let tab = makeTab()
         let fileSystem = ProbedFileSystem(answer: true)
-        let id = attachSession(to: tab, over: fileSystem)
+        let id = await attachSession(to: tab, over: fileSystem)
 
         await tab.recordPermissionEditing(of: fileSystem, kind: .ftp, forSession: id)
 
@@ -164,7 +171,7 @@ struct PermissionEditingRecordTests {
     @Test func theCapabilityIsReadBeforeTheConnectionsOwnAnswer() async {
         let tab = makeTab()
         let fileSystem = ProbedFileSystem(answer: true)
-        let id = attachSession(to: tab, over: fileSystem)
+        let id = await attachSession(to: tab, over: fileSystem)
 
         await tab.recordPermissionEditing(of: fileSystem, kind: .webdav, forSession: id)
 
@@ -176,8 +183,8 @@ struct PermissionEditingRecordTests {
     @Test func anAnswerAboutAnotherSessionIsNotWrittenOntoThisOne() async {
         let tab = makeTab()
         let old = ProbedFileSystem(answer: false)
-        let oldID = attachSession(to: tab, over: old)
-        _ = attachSession(to: tab, over: ProbedFileSystem(answer: true))
+        let oldID = await attachSession(to: tab, over: old)
+        _ = await attachSession(to: tab, over: ProbedFileSystem(answer: true))
         #expect(tab.session?.id != oldID)
 
         await tab.recordPermissionEditing(of: old, kind: .ftp, forSession: oldID)

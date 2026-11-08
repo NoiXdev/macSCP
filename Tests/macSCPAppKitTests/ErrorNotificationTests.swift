@@ -101,7 +101,7 @@ struct ErrorNotificationTests {
     private func attachSession(to tab: SessionTab, storedSessionID: UUID? = nil) {
         let sessionID = UUID()
         let remoteFS = LocalFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -112,6 +112,7 @@ struct ErrorNotificationTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
         tab.activeStoredSessionID = storedSessionID
         tab.liveness = .connected
     }

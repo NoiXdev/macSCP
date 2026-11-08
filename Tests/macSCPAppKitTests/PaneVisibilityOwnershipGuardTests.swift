@@ -82,8 +82,49 @@ struct PaneVisibilityOwnershipGuardTests {
         #expect(files.count > flat, "the App walk no longer descends")
     }
 
-    /// The guard: `SessionTab.swift` owns this property, nobody else touches
+    /// The files that own the property, exempted from the scan below.
+    ///
+    /// Bare file names on purpose, for the reason the guard's own doc comment
+    /// gives: a second file of either name under this target cannot exist,
+    /// and the bare name keeps exempting an owner that moves into a
+    /// subdirectory where a relative path would go red for no violation.
+    private static let exemptedOwners: Set<String> = [
+        "SessionTab.swift", "SessionInstallation.swift",
+    ]
+
+    /// The positive check the exemption owes: every name on it is a file the
+    /// walk found. Without this, renaming or deleting an owner leaves a name
+    /// on the list matching nothing, and the negative check below silently
+    /// covers one more file than it is documented to.
+    @Test func theExemptedOwnersAreFilesTheWalkFinds() throws {
+        let found = Set(try Self.appSwiftFiles().map(\.lastPathComponent))
+        let missing = Self.exemptedOwners.subtracting(found).sorted()
+        #expect(missing.isEmpty, """
+            \(missing) are exempted from `onlySessionTabReadsShowsFilesOffTheSession` but \
+            the App walk finds no such file. An exemption that matches nothing widens the \
+            negative check it stands beside.
+            """)
+    }
+
+    /// The guard: the two files below own this property, nobody else touches
     /// it.
+    ///
+    /// Two since fix round 2 of Task 8 (Ruling T8.8), which moved the session
+    /// storage itself out of `SessionTab` and behind `SessionInstallation`, a
+    /// type in its own file whose `session` is `private(set)` so that a
+    /// `BrowserSession` can reach a tab only through the call that asks. The
+    /// write `session?.showsFiles = newValue` moved with the storage;
+    /// `SessionTab.showsFiles` is still the only way in and out, and now
+    /// forwards to `SessionInstallation.setShowsFiles(_:)`. Neither of those
+    /// reads a struct COPY, which is what this guard is about: both write
+    /// through the stored property.
+    ///
+    /// `exemptedOwners` is asserted to MATCH files the walk actually found
+    /// (`theExemptedOwnersAreFilesTheWalkFinds`), because an exemption naming
+    /// a file that no longer exists would quietly widen a negative check —
+    /// the shape CLAUDE.md's "only a NEGATIVE check can go stale in silence"
+    /// is about, arriving through the exclusion list rather than through the
+    /// pattern.
     ///
     /// Reads `commentFree(of:)`, not `text(of:)` and not `code(of:)`. Not
     /// `text(of:)`: a doc comment spelling `session.showsFiles` is not a
@@ -119,7 +160,7 @@ struct PaneVisibilityOwnershipGuardTests {
     /// relative path would go red for no violation.
     @Test func onlySessionTabReadsShowsFilesOffTheSession() throws {
         let files = try Self.appSwiftFiles()
-            .filter { $0.lastPathComponent != "SessionTab.swift" }
+            .filter { Self.exemptedOwners.contains($0.lastPathComponent) == false }
         #expect(files.count > 1, "re-anchor: no App sources found to scan")
 
         var offenders: [String] = []

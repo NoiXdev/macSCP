@@ -239,7 +239,7 @@ enum TabTeardown {
         // surviving into the next Save would overwrite the wrong stored
         // session (M5f/T4 review).
         form.exitEditMode()
-        tab.session = nil
+        tab.clearSession()
         tab.activeStoredSessionID = nil
         tab.titleName = nil
         // Stale liveness (connection-liveness plan, Task 4, fix round 2).

@@ -31,7 +31,7 @@ struct SessionTabTests {
     private func attachSession(to tab: SessionTab) {
         let sessionID = UUID()
         let remoteFS = LocalFileSystem()
-        tab.session = BrowserSession(
+        let installed = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
             remoteFS: remoteFS,
@@ -42,6 +42,7 @@ struct SessionTabTests {
             }),
             editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
             homePath: "/")
+        tab.installSession(installed, over: installed.remoteFS, kind: .ssh)
     }
 
     /// A tab with no session is not connected, and shows the generic title
@@ -173,7 +174,9 @@ struct SessionTabTests {
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "a", count: 64)))
 
-        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+        let session = try #require(tab.session)
+        tab.checksumLedgerBinding(for: .remote, in: session)
+            .wrappedValue.record(.checksum(digest), for: item)
 
         tab.showsFiles = false
         tab.showsFiles = true
@@ -191,7 +194,9 @@ struct SessionTabTests {
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "b", count: 64)))
 
-        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+        let session = try #require(tab.session)
+        tab.checksumLedgerBinding(for: .remote, in: session)
+            .wrappedValue.record(.checksum(digest), for: item)
 
         #expect(tab.session?.localChecksums.value(for: item, algorithm: .sha256) == nil)
     }
@@ -205,7 +210,9 @@ struct SessionTabTests {
         let item = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
         let digest = try #require(
             FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "c", count: 64)))
-        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+        let session = try #require(tab.session)
+        tab.checksumLedgerBinding(for: .remote, in: session)
+            .wrappedValue.record(.checksum(digest), for: item)
 
         attachSession(to: tab)
 
@@ -470,7 +477,7 @@ struct SessionTabTests {
         // Disconnect (`teardown` nils the session), then an ad-hoc connect:
         // `startSession` builds a fresh session and there is no saved state
         // to restore.
-        tab.session = nil
+        tab.clearSession()
         attachSession(to: tab)
 
         #expect(tab.showsFiles)
@@ -486,7 +493,7 @@ struct SessionTabTests {
         let tab = makeTab()
         attachSession(to: tab)
         tab.applyFilesToggleClick(terminalIsVisible: true, hasShell: true)
-        tab.session = nil
+        tab.clearSession()
         attachSession(to: tab)
 
         // The terminal panel becomes visible (⌘T / the toolbar button).
