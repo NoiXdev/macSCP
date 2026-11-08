@@ -165,6 +165,23 @@ struct PaneVisibilityOwnershipGuardTests {
     /// being text-keyed is a structural boundary on `showsFiles` itself: a
     /// design change outside Task 8, and not one worth making for a
     /// pane-visibility read.
+    ///
+    /// **This residual is not confined to this allowance, and a reader who
+    /// finds it here should know that.** `ReconnectWiringGuardTests`'
+    /// `sessionTabSlotUses` — the counted allowance over the references to
+    /// the session slot in `SessionTab.swift` — carries the same one, for the
+    /// same reason, recorded there as Ruling T8.22: an entry is a
+    /// (normalized line, count) pair either way, and neither says which
+    /// DECLARATION owns the line. The re-review of fix round 4 measured it
+    /// by moving `installation.clear()` byte-identically into a new internal
+    /// method, GREEN against the whole AppKit suite. It is bounded there in a
+    /// way it is not bounded here: the same transplant on that allowance's
+    /// INSTALL line is RED, because a behaviour test stands behind the ask
+    /// the install performs, while moving a line that changes no behaviour
+    /// has nothing standing behind it. The cross-reference ran one way when
+    /// T8.22 was written; this paragraph is the other way, added by the
+    /// controller on 2026-11-08, because a one-way reference between two
+    /// statements of one property is how the second one gets rediscovered.
     private static let sanctionedReads: [SanctionedRead] = [
         SanctionedRead(
             file: "SessionTab.swift",
