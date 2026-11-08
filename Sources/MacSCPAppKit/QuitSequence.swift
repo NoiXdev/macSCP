@@ -152,14 +152,30 @@ enum QuitWatchdog {
     ///
     /// **Upward, from one tab's worst case.** `TabTeardown.run` gives two of
     /// its four stages a five-second bound each (`TeardownStage.boundSeconds`)
-    /// and `remote.disconnect()` carries its own inside
-    /// `CitadelFileSystem.disconnect()` — measured against a `docker pause`d
-    /// peer at 5.002063 s / 5.304208 s / 5.333977 s across three runs, which
-    /// is that inner bound plus the parent closes. So one frozen tab costs
-    /// roughly three bounds, and only one of the two stage bounds was ever
-    /// measured to fire (`terminal.shutdown()`; see `TeardownStage`). Fifteen
-    /// seconds is that worst case with the second stage bound spent too — one
-    /// whole tab, not a fraction of one.
+    /// and `remote.disconnect()` carries a bound of its BACKEND'S — for SSH
+    /// inside `CitadelFileSystem.disconnect()`, measured against a `docker
+    /// pause`d peer at 5.002063 s / 5.304208 s / 5.333977 s across three
+    /// runs, which is that inner bound plus the parent closes. So one frozen
+    /// tab costs roughly three bounds, and only one of the two stage bounds
+    /// was ever measured to fire (`terminal.shutdown()`; see
+    /// `TeardownStage`). Fifteen seconds is that worst case with the second
+    /// stage bound spent too — one whole tab, not a fraction of one.
+    ///
+    /// **"Three bounds" holds for the other three backends too, and that was
+    /// not free.** WebDAV's and S3's `disconnect()` do not suspend, so their
+    /// third bound is zero. FTP's and FTPS's is NIOSSL's five-second default
+    /// `shutdownTimeout`, not this project's, and it applies PER CONNECTION:
+    /// a pool holds up to `maxConcurrentTransfers + 1` of them and nothing
+    /// evicts an idle one beforehand, so at the maximum setting one FTPS tab
+    /// closes nine. Closed in series that would have been about 45 s — up to
+    /// nine times the figure this paragraph's derivation is computed from,
+    /// which is how the whole-branch review found it. `FTPConnectionPool
+    /// .shutdown()` closes them concurrently for exactly that reason, so the
+    /// third bound is ONE of NIOSSL's five seconds again and the arithmetic
+    /// above holds for all four backends. Two things that figure is not: it
+    /// is read from NIOSSL's source rather than measured here (it needs a
+    /// peer that stops answering `close_notify`), and plain FTP's close is a
+    /// local TCP close that returns at once, so only the TLS case spends it.
     ///
     /// **Downward, from the user.** A window with several frozen tabs would
     /// otherwise multiply that: four tabs, three bounds each, is a minute of

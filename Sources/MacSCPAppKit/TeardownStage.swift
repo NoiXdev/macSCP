@@ -45,12 +45,34 @@ import os
 ///   synchronous head, and the measurement makes the synchronous head worth
 ///   more. `ContentView.teardown(_:reason:)` states what that leaves
 ///   unbounded; `LivenessGiveUpOrderingTests` pins both halves.
-/// - `remote.disconnect()`, the fourth stage, carries its own bound inside
+/// - `remote.disconnect()`, the fourth stage, is bounded per BACKEND rather
+///   than here, and the four backends do not all bound it the same way. SSH
+///   carries a bound of this project's own inside
+///   `CitadelFileSystem.disconnect()` — the one `7ac7f7e` installed around
+///   the SFTP channel close — and measured against the same frozen peer,
+///   `disconnect()` came back in 5.002063 s, 5.304208 s and 5.333977 s
+///   across three runs, i.e. its inner bound plus the parent closes. WebDAV's
+///   and S3's need no bound: `WebDAVFileSystem.disconnect()` is
+///   `session?.invalidateAndCancel()` and `S3FileSystem.disconnect()` is
+///   `channel.cancel()`, neither of which suspends. FTP and
+///   FTPS carry no bound of this project's: `FTPFileSystem.disconnect()` is
+///   `pool.shutdown()`, which ends in `channel.close().get()` per
+///   connection, and what caps it is NIOSSL's default `shutdownTimeout` of
+///   five seconds — somebody else's number, and only for the TLS case; a
+///   plain FTP close is a local TCP close and returns at once. A pool holds
+///   up to `maxConcurrentTransfers + 1` connections, so this stage would be
+///   that bound times the pool if the closes ran in series; they run
+///   concurrently instead, which makes it one such bound.
+///   `FTPConnectionPool.shutdown()` carries the whole argument and the
+///   source citation. It is still deliberately left as it is and is NOT
+///   wrapped here. (Withdrawn wording, verbatim: "`remote.disconnect()`,
+///   the fourth stage, carries its own bound inside
 ///   `CitadelFileSystem.disconnect()` — the one `7ac7f7e` installed around
 ///   the SFTP channel close. It is deliberately left as it is and is NOT
-///   wrapped here; measured against the same frozen peer, `disconnect()`
-///   came back in 5.002063 s, 5.304208 s and 5.333977 s across three runs,
-///   i.e. its inner bound plus the parent closes.
+///   wrapped here". It named one backend's bound as the stage's, which was
+///   true when it was written and stopped being true when the FTP backend
+///   landed — the comment going wrong without appearing in any diff, which
+///   is the failure mode `CLAUDE.md` measures.)
 enum TeardownStage: CaseIterable {
     case stopEditWatchers
     case shutDownTerminal

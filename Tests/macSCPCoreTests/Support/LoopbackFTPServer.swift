@@ -736,6 +736,20 @@ actor LoopbackFTPServer {
         state.box.withLockedValue { $0.controlConnections }
     }
 
+    /// Channels this server is holding open RIGHT NOW — control connections,
+    /// passive listeners and data connections alike, as `track(_:)` records
+    /// them and their close futures remove them.
+    ///
+    /// Distinct from `controlConnectionCount`, which only ever rises:
+    /// `controlConnections` is incremented once per accepted session and
+    /// never decremented, so it answers "how many were made" and this answers
+    /// "how many are still there". The case that needs the second question is
+    /// `FTPConnectionPoolTests.shutdownClosesEveryConnectionThePoolHeldAtOnce`,
+    /// which has to see a pool's four connections go from open to gone.
+    var liveChannelCount: Int {
+        state.box.withLockedValue { $0.liveChannels.count }
+    }
+
     /// Data connections that were refused because `requiresTLSSessionReuse`
     /// is on and their handshake was a full one.
     var refusedDataConnectionCount: Int {

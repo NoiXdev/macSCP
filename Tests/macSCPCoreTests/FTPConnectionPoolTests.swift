@@ -588,6 +588,53 @@ struct FTPConnectionPoolTests {
         #expect(outcome.freeAfterRelease == 1)
     }
 
+    /// **`shutdown()` closes every connection the pool held, and it closes
+    /// them concurrently.**
+    ///
+    /// The concurrency is the whole-branch review's F3: the fourth teardown
+    /// stage is unbounded by this project, FTPS's close is capped by NIOSSL's
+    /// five-second `shutdownTimeout` per connection, and a pool holds up to
+    /// `maxConcurrentTransfers + 1` of them with nothing evicting an idle one
+    /// beforehand — so closing them in series made one tab's worth of quit up
+    /// to nine times the figure `QuitWatchdog.bound`'s own derivation was
+    /// computed from. `FTPConnectionPool.shutdown()` says what bounds it and
+    /// why the task group is there.
+    ///
+    /// **What this case can measure and what it cannot.** It cannot measure
+    /// the five seconds: that needs a peer which accepts the connection and
+    /// then stops answering `close_notify`, and the loopback fixture's own
+    /// NIOSSL handler answers on its own event loop. Nor would a wall-clock
+    /// figure belong in an assertion (CLAUDE.md, "A wall-clock ceiling in a
+    /// test measures the runner"). What it measures is the property the group
+    /// could have broken and the serial loop could not: that no connection is
+    /// left open when the stage ends. The positive beside it is the count
+    /// before the shutdown — four live control channels, one command
+    /// connection and three idle transfer connections — so the zero after it
+    /// is about the closes and not about a pool that never opened anything.
+    @Test func shutdownClosesEveryConnectionThePoolHeldAtOnce() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let counts = try await Self.running(server) { host, port in
+            let pool = Self.pool(server, host: host, port: port, slots: 3)
+            _ = try await pool.command()
+            // Acquired and released without a transfer, so the three go to
+            // `idle` and no data connection is opened — the live-channel
+            // count is then exactly the control connections.
+            var leases: [FTPTransferLease] = []
+            for _ in 0..<3 { leases.append(try await pool.acquireTransfer()) }
+            for lease in leases { await lease.release(reusable: true) }
+            let before = await server.liveChannelCount
+            await pool.shutdown()
+            try await pollUntil("every control connection the pool held to close") {
+                await server.liveChannelCount == 0
+            }
+            let after = await server.liveChannelCount
+            return (before: before, after: after)
+        }
+        #expect(counts.before == 4)
+        #expect(counts.after == 0)
+    }
+
     // MARK: - The 421 budget
 
     /// A `421` on acquiring a transfer connection shrinks the budget for that

@@ -363,12 +363,67 @@ actor FTPConnectionPool {
     /// Explicit, like every other lifecycle here: no `deinit` cleanup. A
     /// lease still out when this runs closes its own connection when it is
     /// released, because `isShutDown` stops it being pooled again.
+    ///
+    /// **What bounds this stage, and where that bound comes from.** It is the
+    /// fourth and last stage of `TabTeardown.run`, which calls
+    /// `remote.disconnect()` unbounded — deliberately, because the SSH
+    /// backend carries a bound of this project's own inside
+    /// `CitadelFileSystem.disconnect()`. FTP carries none: this function ends
+    /// in `FTPControlConnection.close()`, whose last statement is
+    /// `channel.close().get()`, the cancellation-blind shape `BoundedClose`'s
+    /// own doc comment describes. What bounds it is the TLS library's
+    /// default, which is somebody else's number rather than this project's:
+    /// `clientContext()` builds from `TLSConfiguration.makeClientConfiguration()`,
+    /// whose `shutdownTimeout` is `.seconds(5)`
+    /// (`.build/checkouts/swift-nio-ssl/Sources/NIOSSL/TLSConfiguration.swift`,
+    /// the `makeClientConfiguration` literal), and `NIOSSLHandler
+    /// .scheduleTimedOutShutdown` is what schedules the unclean shutdown on
+    /// it. Plain FTP's close is a local TCP close and returns at once; an
+    /// FTPS close against a peer that stops answering `close_notify` is
+    /// capped near five seconds.
+    ///
+    /// **So the closes run CONCURRENTLY, and that is the whole reason for the
+    /// task group.** A pool holds up to `maxConcurrentTransfers + 1`
+    /// connections and nothing evicts an idle one beforehand — there is no
+    /// reaper, and `idle` is touched in four places: its declaration,
+    /// `reuseOrDial`, `give(back:reusable:)` and here, which this command
+    /// prints as five lines (the two statements of this function being one
+    /// place):
+    ///
+    ///     /usr/bin/grep -n -e 'private var idle' -e 'idle\.popLast' -e 'idle\.append' -e 'let open = idle' -e 'idle = \[\]' Sources/macSCPCore/FTP/FTPConnectionPool.swift
+    ///
+    /// So one FTPS tab at the maximum setting
+    /// holds nine. Serially that stage was up to nine five-second bounds —
+    /// about 45 s — against a `QuitWatchdog.bound` of 15 s whose own
+    /// derivation computes "one tab's worth" from three bounds with the third
+    /// measured at ~5 s. Independent sockets have no reason to close in
+    /// series, so the group makes the stage ONE such bound again and the
+    /// quit's arithmetic true again. Nothing here blocks a thread and nothing
+    /// waits on a clock: each child task awaits one actor's `close()`, and
+    /// this actor's state is emptied BEFORE the group runs, so the
+    /// re-entrancy the group's suspension allows finds nothing left to close
+    /// — a second `shutdown()` finds an empty `open`, `command()` and
+    /// `acquireTransfer()` refuse on `isShutDown`, and a lease released
+    /// meanwhile closes its own connection.
+    ///
+    /// **The five seconds is NOT measured here**, and the record says so
+    /// rather than implying it: reproducing it needs a peer that accepts the
+    /// connection and then stops answering `close_notify`, which the loopback
+    /// fixture cannot be made to do (its own NIOSSL handler answers on its
+    /// own event loop) and which nothing gated could be asked for in the
+    /// round that wrote this. The figure is read from the library's source,
+    /// cited above; what is measured is that this function still closes every
+    /// connection it held — `shutdownClosesEveryConnectionThePoolHeldAtOnce`.
     func shutdown() async {
         isShutDown = true
         let open = idle + [commandConnection].compactMap { $0 }
         idle = []
         commandConnection = nil
-        for connection in open { await connection.close() }
+        await withTaskGroup(of: Void.self) { group in
+            for connection in open {
+                group.addTask { await connection.close() }
+            }
+        }
         let stranded = waitingOrder
         waitingOrder = []
         for identifier in stranded { waiting.removeValue(forKey: identifier)?.resume(returning: ()) }

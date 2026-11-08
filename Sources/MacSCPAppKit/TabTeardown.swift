@@ -58,10 +58,25 @@ enum TabTeardown {
     ///   measured to need it (`terminal.shutdown()`; it did not return
     ///   inside a 20-second watchdog against a frozen peer, in three runs
     ///   out of three).
-    /// - `remote.disconnect()` carries its own bound INSIDE
+    /// - `remote.disconnect()` is bounded per BACKEND and is deliberately
+    ///   not wrapped again. SSH carries a bound of this project's own INSIDE
+    ///   `CitadelFileSystem.disconnect()` (`7ac7f7e`): measured against that
+    ///   same frozen peer it returned in 5.002063 s / 5.304208 s /
+    ///   5.333977 s. WebDAV's and S3's do not suspend at all. FTP and FTPS
+    ///   carry none of this project's — `FTPFileSystem.disconnect()` is
+    ///   `pool.shutdown()`, capped by NIOSSL's five-second default
+    ///   `shutdownTimeout` per connection for the TLS case and returning at
+    ///   once for plain FTP, with the pool's connections closed
+    ///   concurrently so the stage is one such bound rather than one per
+    ///   connection. `FTPConnectionPool.shutdown()` carries that argument
+    ///   and its source citation; the figure is read from the library and
+    ///   was not measured. (Withdrawn wording, verbatim:
+    ///   "`remote.disconnect()` carries its own bound INSIDE
     ///   `CitadelFileSystem.disconnect()` (`7ac7f7e`) and is deliberately
     ///   not wrapped again: measured against that same frozen peer it
-    ///   returned in 5.002063 s / 5.304208 s / 5.333977 s.
+    ///   returned in 5.002063 s / 5.304208 s / 5.333977 s." It said of the
+    ///   stage what was true of one backend, and the FTP backend landing in
+    ///   a file this comment does not sit in is what made it false.)
     /// - `transferQueue.cancelAll(reason:)` is **not bounded** — neither
     ///   here nor inside itself. It was wrapped for one commit (`eed1c8a`)
     ///   and the maintainer removed the wrapper on 2026-08-28, because the
@@ -83,8 +98,14 @@ enum TabTeardown {
     /// reaches its end".** What holds is: whatever `cancelAll` does, the
     /// three stages after it are bounded, so once `cancelAll` returns this
     /// function reaches its end within roughly
+    /// `2 × TeardownStage.boundSeconds` plus whatever the TAB'S OWN BACKEND
+    /// bounds `disconnect()` by — `CitadelFileSystem.sftpCloseBoundSeconds`
+    /// for SSH, nothing at all for WebDAV and S3, and NIOSSL's five-second
+    /// `shutdownTimeout` for one FTPS connection, the pool's closes being
+    /// concurrent. (Withdrawn wording, verbatim: "within roughly
     /// `2 × TeardownStage.boundSeconds + CitadelFileSystem
-    /// .sftpCloseBoundSeconds`. `cancelAll` itself has no such ceiling: it
+    /// .sftpCloseBoundSeconds`" — one backend's constant standing in for
+    /// four.) `cancelAll` itself has no such ceiling: it
     /// awaits every running transfer to unwind (step 3) and is documented as
     /// able to block on an open decider prompt — which is why
     /// `conflictBridge.cancelOpenPrompt()` runs first, and why the
