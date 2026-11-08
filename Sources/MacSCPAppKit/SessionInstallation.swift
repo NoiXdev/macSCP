@@ -19,12 +19,30 @@ import macSCPCore
 /// plant this exists to refuse was written inside `SessionTab.swift` — a
 /// one-line `installQuietly(_:)` that assigns the session and asks nothing,
 /// with the sanctioned `installSession(…)` call left in place but made
-/// unreachable. Measured against `private(set) var session` on `SessionTab`:
-/// that plant still compiles, because it is in the same file as the property.
-/// Moved here it does not, and the diagnostic is
-/// `cannot assign to property: 'session' is a get-only property` at the
-/// forwarding accessor's file, or `'session' setter is inaccessible` at a
-/// direct write.
+/// unreachable. A `private(set)` therefore would NOT have refused it.
+///
+/// That span is a language fact and it was measured rather than recalled,
+/// 2026-11-08, with two throwaway files under `Sources/MacSCPAppKit` that
+/// were built and then removed with `rm`:
+///
+///     @MainActor final class ZZPrivateSetSpanProbe {
+///         private(set) var slot: Int = 0
+///         func quietlyFromTheSameFile(_ value: Int) { slot = value }
+///     }
+///
+/// `swift build` exits **0** with that file alone — `grep -c 'error:'` on
+/// the log prints 0. Adding a second file whose only statement is
+/// `probe.slot = value` exits **1** with
+/// `ZZPrivateSetSpanProbeOther.swift:4:15: error: cannot assign to property:
+/// 'slot' setter is inaccessible`. One file away, refused; same file,
+/// accepted. The quiet-install plant lives in the same file as the property,
+/// which is the half `private(set)` cannot see.
+///
+/// With the storage here instead, that plant does not compile either, and the
+/// diagnostics are quoted in the fix-round-2 commit that moved it: a write in
+/// `SessionTab.swift` or `ContentView.swift` is `cannot assign to property:
+/// 'session' is a get-only property`, and a write straight at this type's
+/// property is `'session' setter is inaccessible`.
 ///
 /// **What this does not close, stated rather than implied.** Swift's
 /// narrowest access scope is a file, so a function added to THIS file can
