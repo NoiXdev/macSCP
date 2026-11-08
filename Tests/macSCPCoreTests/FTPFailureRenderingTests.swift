@@ -128,6 +128,32 @@ struct FTPFailureRenderingTests {
             #expect(sentence != kind.messageKey, "\(kind) logs its catalogue key")
             let isAKey = sentence.hasPrefix("core.")
             #expect(isAKey == false, "\(kind) logs a key")
+            // The structural half, and the one that does not depend on
+            // luck (F12 of fix round 2): the sentence is not what the
+            // catalogue answers for the same key. The property this test
+            // wants is "this text does not change with the locale", and
+            // nothing in this suite can set a locale; this is the closest
+            // check that needs none.
+            //
+            // It replaces nothing — the ASCII check below stays — but it is
+            // the one the catalogue-lookup plant is caught by on purpose
+            // rather than by accident. The re-review of fix round 1 measured
+            // that plant going red ONLY through the ASCII check, and only
+            // because the `en` catalogue's own sentences happen to carry
+            // typographic punctuation (the em dash in "Authentication
+            // failed — check username or password."). Under an `en`
+            // catalogue that happened to be plain ASCII, a localized
+            // `logSentence` would have passed every check here.
+            let catalogued = CoreL10n.string(kind.messageKey)
+            // The positive beside the negative: the catalogue really answers
+            // for this key. `CoreL10n.string` returns the key it was given
+            // when no catalogue declares it, so without this the inequality
+            // below could be a comparison against a key rather than against
+            // a sentence — satisfied by a catalogue that has gone missing.
+            let catalogueAnswers = catalogued != kind.messageKey
+            #expect(catalogueAnswers, "\(kind)'s catalogue key does not resolve")
+            let isTheCatalogues = sentence == catalogued
+            #expect(isTheCatalogues == false, "\(kind) logs the catalogue's own text")
             // Fixed English means ASCII words: a looked-up translation would
             // carry accents or another script in some locale.
             let isASCII = sentence.allSatisfy(\.isASCII)
