@@ -44,14 +44,27 @@ import macSCPCore
 /// 'session' is a get-only property`, and a write straight at this type's
 /// property is `'session' setter is inaccessible`.
 ///
-/// **What this does not close, stated rather than implied.** Swift's
-/// narrowest access scope is a file, so a function added to THIS file can
-/// still write the property. What that buys is not a guarantee but a place
-/// to look: this file exists for one statement sequence, is named after it,
-/// and has no other reason to grow. The residual is the same one every
-/// capability boundary in this project carries, and
-/// `ReconnectWiringGuardTests`' own "what this guard cannot see" is where
-/// that kind of limit is recorded.
+/// **What the compiler does not close, and what now stands in its place.**
+/// Swift's narrowest access scope is a file, so a function added to THIS
+/// file can still write the property. That residual was not a limit to
+/// record, it was a hole: the re-review of fix round 2 planted
+/// `func zzInstallQuietly(_ built: BrowserSession) { session = built }` here,
+/// called it with the sanctioned `tab.installSession(…)` left present and
+/// byte-identical inside a never-taken `if`, and the plant was **GREEN
+/// against 162 tests**. The argument that this file "has no other reason to
+/// grow" was the same shape as the `change(_:)` argument below, which a
+/// plant also falsified.
+///
+/// So the declared surface of this type is pinned by a POSITIVE check:
+/// `ReconnectWiringGuardTests.sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere`
+/// asserts that the set of lines at this class's own brace depth is exactly
+/// the sanctioned set. It names nothing about a violation — a fourth anchor
+/// is what bought three GREEN plants on this property — so there is no
+/// spelling to evade, and it requires something PRESENT, so it cannot go
+/// stale in silence. **Adding a member here is red, and so is removing
+/// one.** The cost is one entry in that list per declaration line, which is
+/// the cost the "per-field writes" comment below already accepts for a new
+/// field.
 @MainActor
 @Observable
 final class SessionInstallation {
@@ -155,7 +168,11 @@ final class SessionInstallation {
     /// as `changeSession { $0 = built }`. Planted through
     /// `scripts/mutation-probe` in the foreground against
     /// `PermissionsAvailabilityTests|PermissionsSurfaceGuardTests|ObjectLockSheetTests|PermissionEditingRecordTests|ReconnectWiringGuardTests`
-    /// (control: `161 test(s) ran, 0 pre-existing failures`), with the
+    /// (control: `161 test(s) ran, 0 pre-existing failures` — the figure that
+    /// run printed, and a figure about that run only: the same filter counted
+    /// 162 by the end of fix round 2 and 163 once fix round 3 added
+    /// `sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere` to a suite
+    /// inside it), with the
     /// sanctioned `tab.installSession(…)` call left present but unreachable:
     /// **GREEN**. The argument written in its place — that with nothing
     /// installed the call is a no-op, so "every assertion about a connected

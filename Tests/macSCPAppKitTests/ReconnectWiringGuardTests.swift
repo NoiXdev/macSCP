@@ -694,6 +694,95 @@ struct ReconnectWiringGuardTests {
         }
     }
 
+    // MARK: - The one file that can write a tab's session
+
+    /// `SessionInstallation.swift`'s whole declared surface, and the one
+    /// thing a scan can still say about a boundary the compiler closes
+    /// everywhere else.
+    ///
+    /// **Why this exists.** `SessionInstallation.session` is `private(set)`
+    /// and the slot holding the type is `private` on `SessionTab`, so a
+    /// `BrowserSession` reaches a tab only through `installSession(_:over:
+    /// kind:)` — measured, with the compiler's own refusals, in fix rounds 2
+    /// and 3 of Task 8. What neither access level reaches is a function added
+    /// to `SessionInstallation.swift` ITSELF: a file is the narrowest access
+    /// scope Swift has. Planted by the re-review of fix round 2 as
+    /// `func zzInstallQuietly(_ built: BrowserSession) { session = built }`,
+    /// with the sanctioned `tab.installSession(…)` call left present and
+    /// byte-identical inside a never-taken `if`, it was **GREEN against 162
+    /// tests**.
+    ///
+    /// **Why a set equality and not a fourth anchor.** Three GREEN plants on
+    /// this property were bought by anchors: an anchor is a substring the
+    /// violation has to spell, so a violation spelled otherwise walks past
+    /// it. This names nothing about a violation at all — it names the
+    /// sanctioned STATE, so there is no spelling to evade: any line that
+    /// appears at the type's own brace depth fails it, whatever it is called.
+    /// And it REQUIRES something present, which is the half CLAUDE.md's
+    /// "only a NEGATIVE check can go stale in silence" is about: a `!contains`
+    /// of a guessed shape starts matching nothing and reads like a check that
+    /// is satisfied, while this one fails loudly the moment anything in that
+    /// file moves — in either direction, a member added or a member removed.
+    ///
+    /// **The span is brace depth, not indentation.** A member written at any
+    /// indentation, or on one line, still sits at depth 1 of the class body;
+    /// an indentation-based scan would have been a check pointed at the wrong
+    /// region, which this project has a rule about. The cost is that
+    /// rewrapping a signature is red too: the three lines of `install(`'s
+    /// declaration are three entries here. That is the intended cost — it is
+    /// the same cost `sanctionedSites` above already charges for a line, and
+    /// a reviewer reads this file for exactly this question.
+    ///
+    /// The list is compared, not spelled twice: the found set is READ from
+    /// the file and the declared set below is the only literal.
+    private static let sessionInstallationSurface: Set<String> = [
+        "private(set) var session: BrowserSession?",
+        "@ObservationIgnored private(set) var permissionProbe: Task<Void, Never>?",
+        "func install(",
+        "_ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind",
+        ") {",
+        "func recordPermissionEditing(",
+        "of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID",
+        ") async {",
+        "func cancelPermissionProbe() {",
+        "func clear() {",
+        "func setShowsFiles(_ value: Bool) {",
+        "func setChecksums(_ ledger: ChecksumLedger, for side: BrowserPaneSide) {",
+        "func setObjectLockStates(_ cache: ObjectLockStateCache?) {",
+        "func setBucketVersioning(_ cache: BucketVersioningCache?) {",
+    ]
+
+    @Test func sessionInstallationDeclaresExactlyTheSurfaceSanctionedHere() throws {
+        let found = try Self.classSurface(
+            of: "SessionInstallation",
+            in: Self.file("Sources/MacSCPAppKit/SessionInstallation.swift"))
+        // The floor that says the walk read a class body at all, so a set
+        // equality cannot be satisfied by two empty sets after a rename of
+        // the type or a change to `strippedBody`'s anchor handling.
+        #expect(found.count >= 10, """
+            only \(found.count) line(s) found at `SessionInstallation`'s own brace depth — \
+            the walk is not reading the class body, and the comparison below is comparing \
+            nothing.
+            """)
+        let added = found.subtracting(Self.sessionInstallationSurface).sorted()
+        let removed = Self.sessionInstallationSurface.subtracting(found).sorted()
+        #expect(found == Self.sessionInstallationSurface, """
+            `SessionInstallation`'s declared surface has changed.
+            present but not sanctioned: \(added)
+            sanctioned but absent: \(removed)
+
+            This file is the ONE place a `BrowserSession` can be written onto a tab: its \
+            `session` is `private(set)`, and a file is the narrowest access scope Swift \
+            has, so anything declared here can install a session without asking its \
+            connection about permission editing — the half of the operation \
+            `installSession(_:over:kind:)` exists to make inseparable. A new member of \
+            this type is a security decision: add it here WITH a reason, and expect that \
+            addition to be read as one. A member that is GONE is one too — the line it \
+            was sanctioned as is no longer in the file, so the allowance above has \
+            stopped describing the code.
+            """)
+    }
+
     /// The walk itself has to be believable, or both tests above pass by
     /// scanning nothing. Checked against a floor and a known member rather
     /// than an exact count, so adding a source file is not a test edit.
@@ -1998,6 +2087,43 @@ struct ReconnectWiringGuardTests {
     private static func strippedBody(after anchor: String, in file: URL) throws -> String {
         let source = try SourceCorpus.text(of: file)
         return try strippedBody(after: anchor, in: source)
+    }
+
+    /// Every non-blank line of `final class <name>`'s body that sits at
+    /// brace depth 1 — inside the class and inside nothing else — normalized
+    /// the same way `sanctionedSites` normalizes a line.
+    ///
+    /// Depth is counted from the class's own opening brace, so a member is
+    /// recognized by STRUCTURE and not by a keyword list: no enumeration of
+    /// `func`/`var`/`subscript`/`init` to walk past, and no indentation to
+    /// defeat by writing the member at the wrong one. The class's own
+    /// closing `}` is the one depth-1 line dropped; a member's closing brace
+    /// sits at depth 2 and never reaches here.
+    private static func classSurface(of name: String, in file: URL) throws -> Set<String> {
+        let body = try strippedBody(after: "final class \(name)", in: file)
+        var surface: Set<String> = []
+        var depth = 0
+        var depthAtLineStart = 0
+        var line = ""
+        func take() {
+            guard depthAtLineStart == 1 else { return }
+            let code = normalized(line)
+            guard code.isEmpty == false, code != "}" else { return }
+            surface.insert(code)
+        }
+        for character in body {
+            if character == "\n" {
+                take()
+                line = ""
+                depthAtLineStart = depth
+                continue
+            }
+            line.append(character)
+            if character == "{" { depth += 1 }
+            if character == "}" { depth -= 1 }
+        }
+        take()
+        return surface
     }
 
     /// Strips comments and string literals FIRST, then counts braces from
