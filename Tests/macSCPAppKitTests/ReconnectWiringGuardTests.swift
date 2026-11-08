@@ -493,10 +493,41 @@ struct ReconnectWiringGuardTests {
         let reason: String
     }
 
-    /// Fifteen entries, counted while writing this sentence. Adding a
-    /// sixteenth is a deliberate edit here, with a reason, which is the
+    /// Adding an entry is a deliberate edit here, with a reason, which is the
     /// entire mechanism: a new dial cannot become invisible by being
     /// somewhere nobody anchored on.
+    ///
+    /// **Twenty-one entries**, and the figure travels with the command that
+    /// produced it rather than with a claim that it was counted while the
+    /// sentence was written. Run from the repository root:
+    ///
+    ///     /usr/bin/grep -rn 'SanctionedSite(' Tests/macSCPAppKitTests/ReconnectWiringGuardTests.swift | /usr/bin/grep -vE ':[0-9]+: *(///|//)' | /usr/bin/grep -oE 'SanctionedSite\(' | wc -l
+    ///
+    /// prints **21**. The middle stage is the load-bearing part, not
+    /// decoration: it drops every match whose line starts with a comment
+    /// marker, which is what keeps the pattern from counting the prose about
+    /// it — this paragraph spells the token, and so does the command. `-rn`
+    /// and not `-n`, and that is not cosmetic: with one path `grep -n`
+    /// prints `<line>:<text>` with no filename, so the filter's `:[0-9]+:`
+    /// has nothing to anchor on, nothing is dropped, and the figure comes
+    /// back 22 — the entries plus this paragraph's own command line.
+    /// Measured here by running the command after writing the sentence,
+    /// which is the step that catches it. The
+    /// unfiltered count is deliberately NOT stated here: it moves whenever
+    /// this comment is edited, so writing it down would commit a figure that
+    /// the next sentence about it falsifies. Only the filtered count is a
+    /// figure about the code. The control that says the pattern can match at
+    /// all is the first stage's own output, whose lines are the entries
+    /// below.
+    ///
+    /// (Withdrawn wording, verbatim: "Fifteen entries, counted while writing
+    /// this sentence. Adding a sixteenth is a deliberate edit here, with a
+    /// reason, which is the entire mechanism: a new dial cannot become
+    /// invisible by being somewhere nobody anchored on." The claim that it
+    /// was counted was false by the time the re-review of fix round 1 read
+    /// it: 17 at `e0201e79`, 19 at `4712623e`, so the figure was two short
+    /// before this round and four short after it. The prose is kept; what
+    /// changes is that the cardinality now has a command under it.)
     private static let sanctionedSites: [SanctionedSite] = [
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift",
