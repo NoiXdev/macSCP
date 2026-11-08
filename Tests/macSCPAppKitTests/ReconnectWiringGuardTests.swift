@@ -509,16 +509,32 @@ struct ReconnectWiringGuardTests {
     /// it — this paragraph spells the token, and so does the command. `-rn`
     /// and not `-n`, and that is not cosmetic: with one path `grep -n`
     /// prints `<line>:<text>` with no filename, so the filter's `:[0-9]+:`
-    /// has nothing to anchor on, nothing is dropped, and the figure comes
-    /// back 22 — the entries plus this paragraph's own command line.
+    /// has nothing to anchor on and nothing is dropped — the pipeline then
+    /// counts this paragraph's own command line along with the entries.
     /// Measured here by running the command after writing the sentence,
-    /// which is the step that catches it. The
-    /// unfiltered count is deliberately NOT stated here: it moves whenever
-    /// this comment is edited, so writing it down would commit a figure that
-    /// the next sentence about it falsifies. Only the filtered count is a
-    /// figure about the code. The control that says the pattern can match at
+    /// which is the step that catches it. The unfiltered count is
+    /// deliberately not MAINTAINED here as a live figure: it moves whenever
+    /// this comment is edited, so a number for it would be one the next
+    /// sentence about it falsifies. It does appear once below, inside a
+    /// verbatim withdrawal — a quotation of the sentence that used to state
+    /// it as live, which is data and not a claim — so a `grep` for it finds
+    /// it there and nowhere else. Only the filtered count is a figure about
+    /// the code. The control that says the pattern can match at
     /// all is the first stage's own output, whose lines are the entries
     /// below.
+    ///
+    /// (Withdrawn wording, verbatim: "nothing is dropped, and the figure
+    /// comes back 22 — the entries plus this paragraph's own command line."
+    /// The figure was right and still reproduces — fix round 3 re-ran the
+    /// `-n` variant and got the same number. What was wrong is what it did to
+    /// the sentence a few lines below it, which said the unfiltered count is
+    /// deliberately not stated here while this paragraph stated it. That is
+    /// the third point of CLAUDE.md's "A number travels with the command that
+    /// produced it" — a sentence that falsifies itself by existing — and it
+    /// was found by re-reading after writing, which is the only way it is
+    /// found. The behaviour the figure illustrated is kept in prose; the
+    /// figure is the one part of it that moves whenever this comment is
+    /// edited, and the sentence above now says exactly where it survives.)
     ///
     /// (Withdrawn wording, verbatim: "Fifteen entries, counted while writing
     /// this sentence. Adding a sixteenth is a deliberate edit here, with a
