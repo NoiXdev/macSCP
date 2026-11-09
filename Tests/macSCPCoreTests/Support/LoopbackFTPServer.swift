@@ -241,6 +241,16 @@ actor LoopbackFTPServer {
     /// control connection's tickets, so every data handshake here is a FULL
     /// one, which is the only kind the certificate comparison runs on.
     private let dataConnectionsPresentAnotherCertificate: Bool
+    /// Whether the server writes `150` BEFORE it lets the held data handshake
+    /// run, and answers a handshake that fails with a completion reply on the
+    /// control connection (`426`) instead of the opening `425` every other
+    /// mode here writes. It is the order ProFTPD was measured to use (the
+    /// rig, FTP plan Task 11.5: `150`, then the data handshake), and the only
+    /// one in which a failed handshake reaches `FTPDataChannel
+    /// .completeHandshake()`; with the `425` first, the body that calls it
+    /// never runs. Needs `dataTLSStartsAfterCommand`, because a handshake that
+    /// is not held has already run by the time the command is read.
+    private let announcesTransferBeforeItsDataHandshake: Bool
     /// When set, every transfer over a PROTECTED data connection is refused
     /// with `425` before the handshake is touched, and the data connection is
     /// treated as the value says. A refusal that has nothing to do with TLS.
@@ -370,8 +380,13 @@ actor LoopbackFTPServer {
         advertisesSiteChmodInFEAT: Bool = false,
         dataTLSStartsAfterCommand: Bool = false,
         dataConnectionsPresentAnotherCertificate: Bool = false,
-        refusesProtectedTransfersWith425: LoopbackDataRefusal? = nil
+        refusesProtectedTransfersWith425: LoopbackDataRefusal? = nil,
+        announcesTransferBeforeItsDataHandshake: Bool = false
     ) {
+        precondition(
+            !announcesTransferBeforeItsDataHandshake || dataTLSStartsAfterCommand,
+            "announcesTransferBeforeItsDataHandshake needs dataTLSStartsAfterCommand")
+        self.announcesTransferBeforeItsDataHandshake = announcesTransferBeforeItsDataHandshake
         self.security = security
         self.refusesProtectedTransfersWith425 = refusesProtectedTransfersWith425
         self.dataConnectionsPresentAnotherCertificate = dataConnectionsPresentAnotherCertificate
@@ -421,7 +436,8 @@ actor LoopbackFTPServer {
             advertisesSiteChmodInFEAT: advertisesSiteChmodInFEAT,
             requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
             passiveDepth: passiveDepth, dataTLSStartsAfterCommand: dataTLSStartsAfterCommand,
-            refusesProtectedTransfersWith425: refusesProtectedTransfersWith425)
+            refusesProtectedTransfersWith425: refusesProtectedTransfersWith425,
+            announcesTransferBeforeItsDataHandshake: announcesTransferBeforeItsDataHandshake)
         let state = self.state
         let context = self.context
         let dataContext = self.dataContext
@@ -864,6 +880,7 @@ actor LoopbackFTPServer {
         let passiveDepth: Int
         let dataTLSStartsAfterCommand: Bool
         let refusesProtectedTransfersWith425: LoopbackDataRefusal?
+        let announcesTransferBeforeItsDataHandshake: Bool
     }
 
     /// Delivers a control channel to the accept loop, or, if the loop's stream has
@@ -1967,6 +1984,8 @@ final class LoopbackFTPSession: @unchecked Sendable {
 
         // A held handshake starts now, because the transfer command has been
         // read: this is the moment a daemon that waits for it would begin.
+        let announcedFirst = configuration.announcesTransferBeforeItsDataHandshake
+        if announcedFirst { try await send(150, "Opening the data connection.") }
         data.activate?()
         if let handshake = data.handshake {
             let resumed: Bool
@@ -1974,7 +1993,13 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 resumed = try await awaitCancellably(handshake)
             } catch {
                 try? await data.channel.executeThenClose { _, _ in }
-                try await send(425, "The TLS handshake on the data connection failed.")
+                if announcedFirst {
+                    // The `150` is out, so the refusal is the transfer's
+                    // COMPLETION reply, the second one it promised.
+                    try await send(426, "The TLS handshake on the data connection failed.")
+                } else {
+                    try await send(425, "The TLS handshake on the data connection failed.")
+                }
                 return .keepGoing
             }
             if configuration.requiresTLSSessionReuse, !resumed {
@@ -2000,7 +2025,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
             return .keepGoing
         }
 
-        try await send(150, "Opening the data connection.")
+        if !announcedFirst { try await send(150, "Opening the data connection.") }
 
         let drop = state.box.withLockedValue { inner -> Bool in
             let armed = inner.dropNextTransfer

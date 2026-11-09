@@ -763,14 +763,29 @@ struct FTPDataConnectionTests {
     /// security-specific reading was lost. Both orderings of the loopback
     /// server, because the handshake verdict and the `425` race differently in
     /// each.
-    @Test(arguments: [false, true])
+    ///
+    /// **The third argument is the order ProFTPD uses, and the only one that
+    /// reaches `completeHandshake()`'s failure arms.** Its `150` comes first,
+    /// then the data handshake, and a handshake that fails is answered by the
+    /// transfer's completion reply (`426` here). The body runs, so the failure
+    /// is thrown from inside it and `transferCommand` reads the owed reply
+    /// before rethrowing: the control connection stays in step, which the
+    /// `NOOP` asserts. With the opening `425` of the first two arguments the
+    /// body never runs, and a constant `tlsHandshakeFailed` planted in
+    /// `completeHandshake()`'s `.some(false)` arm leaves them green.
+    @Test(arguments: [
+        (handshakeAfterCommand: false, announcedFirst: false),
+        (handshakeAfterCommand: true, announcedFirst: false),
+        (handshakeAfterCommand: true, announcedFirst: true),
+    ])
     func aTransferWhoseDataConnectionPresentsAnotherCertificateFailsAsSuch(
-        handshakeAfterCommand: Bool
+        handshakeAfterCommand: Bool, announcedFirst: Bool
     ) async throws {
         let server = LoopbackFTPServer(
             security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false,
             dataTLSStartsAfterCommand: handshakeAfterCommand,
-            dataConnectionsPresentAnotherCertificate: true)
+            dataConnectionsPresentAnotherCertificate: true,
+            announcesTransferBeforeItsDataHandshake: announcedFirst)
         await server.seedFile(Self.seededName, contents: Self.seeded)
         let outcome = try await Self.running(server) { host, port in
             let connection = try await Self.connect(
