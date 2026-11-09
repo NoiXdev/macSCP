@@ -681,6 +681,69 @@ struct FTPDataConnectionTests {
         #expect(outcome.ended == .cancelled)
     }
 
+    // MARK: - A data handshake that waits for the command
+
+    /// A protected transfer completes against a server that starts the data
+    /// connection's TLS handshake only AFTER it has read the transfer command.
+    ///
+    /// **This is ProFTPD's behaviour, and the rig is where it was measured**
+    /// (2026-11-09: the daemon's trace read `EPSV`, and then nothing for as
+    /// long as the client's bound, because the client was waiting for a
+    /// handshake the daemon would not begin until it was sent a `STOR`).
+    /// `LoopbackFTPServer` answered a ClientHello the moment the data
+    /// connection opened, so every case here passed against a client that
+    /// awaited the handshake first; `dataTLSStartsAfterCommand` holds the
+    /// ClientHello until the command is read, which is what a daemon that
+    /// waits does.
+    ///
+    /// Both directions, because each is a different command on the same
+    /// ordering, and the journal read at the end says the data
+    /// handshakes RESUMED the control connection's session — the ordering
+    /// change must not have cost the reuse a server like this enforces.
+    @Test func aTransferIsCommandedBeforeItsDataHandshakeIsAwaited() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true,
+            dataTLSStartsAfterCommand: true)
+        await server.seedFile(Self.seededName, contents: Self.seeded)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS, decider: Self.accepting)
+            let downloaded = FTPByteSink()
+            let download = await Self.outcome {
+                try await FTPDataConnection.transfer(
+                    "RETR", argument: Self.seededName, on: connection
+                ) { channel in
+                    downloaded.append(try await channel.readToEnd())
+                }
+            }
+            let uploaded = await Self.outcome {
+                try await FTPDataConnection.transfer(
+                    "STOR", argument: "/up.bin", on: connection
+                ) { channel in
+                    try await channel.write(Self.seeded)
+                }
+            }
+            await connection.close()
+            return (
+                download: download, upload: uploaded,
+                downloadedMatches: downloaded.matches(Self.seeded)
+            )
+        }
+        #expect(outcome.download == .completed)
+        #expect(outcome.upload == .completed)
+        #expect(outcome.downloadedMatches)
+        let stored = await server.contents(of: "/up.bin")
+        #expect(stored == Self.seeded)
+        // Two data handshakes, and every one a resumption. Two and not more:
+        // a control connection holds two tickets and each is used once
+        // (`FTPSessionVault`'s own measurement), so a third protected
+        // transfer here would be refused by `requiresTLSSessionReuse` for a
+        // reason that has nothing to do with this case.
+        let dataHandshakes = await server.handshakes.filter { $0.connection == .data }
+        #expect(dataHandshakes.count == 2)
+        #expect(dataHandshakes.allSatisfy { $0.resumed })
+    }
+
     // MARK: - A refused session resumption
 
     /// A `522` is retried once rather than handed to the caller.

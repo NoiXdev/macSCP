@@ -212,6 +212,17 @@ actor LoopbackFTPServer {
     private let advertisesMLSD: Bool
     private let offersSiteCommands: Bool
     private let advertisesSiteChmodInFEAT: Bool
+    /// Whether a protected DATA connection's TLS handshake starts only after
+    /// the transfer command has been read. `true` is what ProFTPD does
+    /// (measured against the rig, 2026-11-09: the handshake after `EPSV` waits
+    /// for the `STOR`/`RETR`/`LIST`), and the ClientHello that arrives sooner
+    /// is held, unanswered, until then. `false`, the default, is what this
+    /// fixture did before the parameter existed: it answered a ClientHello the
+    /// moment the connection opened, which no case could tell from a daemon
+    /// that waits, and which is why a client that waited for the handshake
+    /// before sending its transfer command passed here and hung against a real
+    /// server.
+    private let dataTLSStartsAfterCommand: Bool
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let passiveDepth: Int
@@ -333,9 +344,11 @@ actor LoopbackFTPServer {
         maximumTLSVersion: TLSVersion = .tlsv13,
         passiveDepth: Int = 1,
         offersSiteCommands: Bool = true,
-        advertisesSiteChmodInFEAT: Bool = false
+        advertisesSiteChmodInFEAT: Bool = false,
+        dataTLSStartsAfterCommand: Bool = false
     ) {
         self.security = security
+        self.dataTLSStartsAfterCommand = dataTLSStartsAfterCommand
         self.advertisesMLSD = advertisesMLSD
         self.offersSiteCommands = offersSiteCommands
         self.advertisesSiteChmodInFEAT = advertisesSiteChmodInFEAT
@@ -377,7 +390,7 @@ actor LoopbackFTPServer {
             offersSiteCommands: offersSiteCommands,
             advertisesSiteChmodInFEAT: advertisesSiteChmodInFEAT,
             requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
-            passiveDepth: passiveDepth)
+            passiveDepth: passiveDepth, dataTLSStartsAfterCommand: dataTLSStartsAfterCommand)
         let state = self.state
         let context = self.context
         let (accepted, acceptedContinuation) = AsyncStream.makeStream(
@@ -817,6 +830,7 @@ actor LoopbackFTPServer {
         let requiresTLSSessionReuse: Bool
         let credentials: LoopbackFTPCredentials
         let passiveDepth: Int
+        let dataTLSStartsAfterCommand: Bool
     }
 
     /// Delivers a control channel to the accept loop, or, if the loop's stream has
@@ -1124,6 +1138,60 @@ struct CRLFLineDecoder: ByteToMessageDecoder {
 struct LoopbackFTPDataConnection: Sendable {
     let channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>
     let handshake: EventLoopFuture<Bool>?
+    /// Lets the held ClientHello through (`dataTLSStartsAfterCommand`); `nil`
+    /// when the handshake was never held.
+    var activate: (@Sendable () -> Void)?
+}
+
+/// Holds a data connection's inbound bytes, unanswered, until released, then
+/// installs the TLS handlers behind itself and replays what it held through
+/// them. The ClientHello a client sends the moment it connects is what it
+/// holds: a daemon that starts a data connection's handshake only after the
+/// transfer command (ProFTPD) has not read it yet either.
+///
+/// `@unchecked Sendable` for `LoopbackActivationAnnouncer`'s reason: NIO calls
+/// every method on the channel's event loop, and `release()` is scheduled onto
+/// it by the caller.
+final class LoopbackTLSHoldGate: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
+
+    private let tls: LoopbackTLSHandlers
+    private var context: ChannelHandlerContext?
+    private var held: [ByteBuffer] = []
+    private var released = false
+
+    init(tls: LoopbackTLSHandlers) {
+        self.tls = tls
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        self.context = context
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        if released {
+            context.fireChannelRead(data)
+        } else {
+            held.append(unwrapInboundIn(data))
+        }
+    }
+
+    /// On the event loop only.
+    func release() {
+        guard !released, let context else { return }
+        released = true
+        do {
+            try context.pipeline.syncOperations.addHandlers(tls.handlers, position: .after(self))
+        } catch {
+            context.close(promise: nil)
+            return
+        }
+        let replay = held
+        held = []
+        for buffer in replay { context.fireChannelRead(wrapInboundOut(buffer)) }
+        if !replay.isEmpty { context.fireChannelReadComplete() }
+    }
 }
 
 /// Traps, with a message that names the cause, when two reads of a
@@ -1731,6 +1799,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
         let (connections, continuation) = AsyncStream.makeStream(of: LoopbackFTPDataConnection.self)
         let context = dataProtected ? self.context : nil
         let state = self.state
+        let holdsHandshake = configuration.dataTLSStartsAfterCommand
         let channel = try await awaitCancellably(
             ServerBootstrap(group: group)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -1738,6 +1807,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
                     channel.eventLoop.makeCompletedFuture {
                         guard state.track(channel) else { return }
                         var handshake: EventLoopFuture<Bool>?
+                        var activate: (@Sendable () -> Void)?
                         if let context {
                             let tls = LoopbackTLSHandlers(
                                 context: context, eventLoop: channel.eventLoop,
@@ -1746,12 +1816,20 @@ final class LoopbackFTPSession: @unchecked Sendable {
                                         $0.handshakes.append(.init(connection: .data, resumed: resumed))
                                     }
                                 })
-                            try channel.pipeline.syncOperations.addHandlers(tls.handlers)
+                            if holdsHandshake {
+                                let gate = LoopbackTLSHoldGate(tls: tls)
+                                try channel.pipeline.syncOperations.addHandler(gate)
+                                let eventLoop = channel.eventLoop
+                                activate = { eventLoop.execute { gate.release() } }
+                            } else {
+                                try channel.pipeline.syncOperations.addHandlers(tls.handlers)
+                            }
                             handshake = tls.verdict
                         }
                         let wrapped = try NIOAsyncChannel<ByteBuffer, ByteBuffer>(
                             wrappingChannelSynchronously: channel)
-                        let connection = LoopbackFTPDataConnection(channel: wrapped, handshake: handshake)
+                        let connection = LoopbackFTPDataConnection(
+                            channel: wrapped, handshake: handshake, activate: activate)
                         try channel.pipeline.syncOperations.addHandler(
                             LoopbackActivationAnnouncer {
                                 LoopbackFTPServer.hand(connection, to: continuation, state: state)
@@ -1836,6 +1914,9 @@ final class LoopbackFTPSession: @unchecked Sendable {
             return .keepGoing
         }
 
+        // A held handshake starts now, because the transfer command has been
+        // read: this is the moment a daemon that waits for it would begin.
+        data.activate?()
         if let handshake = data.handshake {
             let resumed: Bool
             do {

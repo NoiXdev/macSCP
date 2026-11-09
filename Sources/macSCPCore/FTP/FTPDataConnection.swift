@@ -169,7 +169,14 @@ enum FTPDataConnection {
     /// Active mode (`PORT`) is not here and is not planned: it needs the
     /// client to listen, which is what firewalls and NAT have made
     /// unworkable, and it is why passive mode exists.
-    static func openPassive(on control: FTPControlConnection) async throws -> FTPDataChannel {
+    ///
+    /// `awaitingHandshake: false` leaves a protected connection's TLS handshake
+    /// running and returns at once; `transfer` is the caller, and completes it
+    /// after the transfer command (`FTPDataChannel.completeHandshake()`). The
+    /// default keeps every other caller's behaviour.
+    static func openPassive(
+        on control: FTPControlConnection, awaitingHandshake: Bool = true
+    ) async throws -> FTPDataChannel {
         let prefersClassic = await control.prefersClassicPassive
         if !prefersClassic {
             let extended = try await control.send("EPSV", argument: nil)
@@ -177,7 +184,8 @@ enum FTPDataConnection {
                 let endpoint = try Self.extendedPassiveEndpoint(
                     extended, peerHost: control.peerHost)
                 return try await control.openDataConnection(
-                    host: endpoint.host, port: endpoint.port)
+                    host: endpoint.host, port: endpoint.port,
+                    awaitingHandshake: awaitingHandshake)
             }
             await control.noteExtendedPassiveRefused()
         }
@@ -186,7 +194,8 @@ enum FTPDataConnection {
             throw FTPConnectionFailure.passiveModeRefused(code: classic.code)
         }
         let endpoint = try Self.passiveEndpoint(classic, peerHost: control.peerHost)
-        return try await control.openDataConnection(host: endpoint.host, port: endpoint.port)
+        return try await control.openDataConnection(
+            host: endpoint.host, port: endpoint.port, awaitingHandshake: awaitingHandshake)
     }
 
     // MARK: - One transfer
@@ -235,11 +244,19 @@ enum FTPDataConnection {
                     throw FTPConnectionFailure.restRefused(code: marker.code)
                 }
             }
-            let channel = try await Self.openPassive(on: control)
+            // The TLS handshake is NOT awaited here: it runs while the
+            // command below is sent, and is completed once the server has said
+            // `150`. A server that accepts a data connection's handshake only
+            // after it has read the transfer command (ProFTPD, measured against
+            // the rig on 2026-11-09) answers nothing to a ClientHello until
+            // then, so waiting first is waiting for a command this function has
+            // not sent.
+            let channel = try await Self.openPassive(on: control, awaitingHandshake: false)
             let replies: (opening: FTPReply, completion: FTPReply?)
             do {
                 replies = try await control.transferCommand(command, argument: argument) {
                     do {
+                        try await channel.completeHandshake()
                         try await body(channel)
                         await channel.close()
                     } catch {
@@ -257,6 +274,7 @@ enum FTPDataConnection {
                 // second one — so the channel is still this function's to
                 // close.
                 let refusedTheSession = replies.opening.code == Self.sessionReuseRefused
+                await channel.resolveResumptionWithoutWaiting()
                 let resumed = channel.didResumeTLSSession
                 await channel.close(returningSession: !(refusedTheSession && resumed))
                 if refusedTheSession, attempt < Self.attemptsOnSessionRefusal {

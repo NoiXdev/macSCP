@@ -488,7 +488,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
 actor FTPControlConnection {
     /// Which control connection this is. The scope a TLS session belongs to:
     /// a session established here is offered only to data connections opened
-    /// for THIS identity (see `openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`).
+    /// for THIS identity (see `openDataConnection(host:port:protection:owner:timeout:idleTimeout:awaitingHandshake:)`).
     struct Identity: Hashable, Sendable {
         private let raw = UUID()
     }
@@ -588,7 +588,7 @@ actor FTPControlConnection {
 
     /// This control connection's TLS sessions, and which of them a data
     /// connection is holding right now. Scoped to this connection: see
-    /// `openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`.
+    /// `openDataConnection(host:port:protection:owner:timeout:idleTimeout:awaitingHandshake:)`.
     private let vault = FTPSessionVault()
 
     private var featureSet: Set<String> = []
@@ -1335,10 +1335,28 @@ actor FTPControlConnection {
     /// cannot be written. Every caller in the backend goes through this one
     /// (`FTPDataConnection.openPassive`); the static's argument check remains
     /// for the test that pins the refusal.
-    func openDataConnection(host: String, port: Int) async throws -> FTPDataChannel {
+    ///
+    /// **`awaitingHandshake` is the whole of the TLS data-connection ordering
+    /// problem, and it defaults to the old behaviour on purpose.** `true`
+    /// returns once the TLS handshake has completed. That is only possible
+    /// where the server accepts a data connection before it has been told what
+    /// to do with it, and the rig's ProFTPD does not: it starts the data
+    /// connection's handshake only after it has READ the transfer command, so a
+    /// client that waits for the handshake first waits for a ClientHello answer
+    /// that is queued behind a command it has not sent. Measured against the
+    /// rig on 2026-11-09: the first `STOR` after `EPSV` timed out, and the
+    /// daemon's trace showed `EPSV` and then nothing. `false` returns as soon
+    /// as the connection is open, with the handshake running; the caller sends
+    /// its transfer command and then calls `FTPDataChannel.completeHandshake()`
+    /// (`FTPDataConnection.transfer` is that caller). The two are the same
+    /// handshake with the same failures, in a different order.
+    func openDataConnection(
+        host: String, port: Int, awaitingHandshake: Bool = true
+    ) async throws -> FTPDataChannel {
         try await Self.openDataConnection(
             host: host, port: port, protection: await dataProtection(), owner: identity,
-            timeout: timeout, idleTimeout: tuning.dataIdleTimeout)
+            timeout: timeout, idleTimeout: tuning.dataIdleTimeout,
+            awaitingHandshake: awaitingHandshake)
     }
 
     /// Opens a data connection, refusing a protection that belongs to another
@@ -1368,7 +1386,7 @@ actor FTPControlConnection {
     ///   until fix round 1 (R2), so it has no default.
     static func openDataConnection(
         host: String, port: Int, protection: DataProtection?, owner: Identity,
-        timeout: Duration, idleTimeout: Duration
+        timeout: Duration, idleTimeout: Duration, awaitingHandshake: Bool = true
     ) async throws -> FTPDataChannel {
         if let protection, protection.owner != owner {
             // The session goes back before the throw. Every other failure
@@ -1435,7 +1453,7 @@ actor FTPControlConnection {
         }
 
         var resumed = false
-        if protection != nil {
+        if protection != nil, awaitingHandshake {
             switch await events.awaitHandshake(timeout: timeout) {
             case .some(true):
                 resumed = (try? await channel.nioSSL_tlsSessionWasResumed().get()) ?? false
@@ -1458,7 +1476,9 @@ actor FTPControlConnection {
         return FTPDataChannel(
             channel: channel, chunks: FTPLineSource(stream), deliver: continuation, events: events,
             didResumeTLSSession: resumed, bound: Self.timeAmount(idleTimeout),
-            session: protection?.session, vault: protection?.vault)
+            session: protection?.session, vault: protection?.vault,
+            handshakeTimeout: protection != nil && !awaitingHandshake ? timeout : nil,
+            certificateOutcome: outcome)
     }
 
     // MARK: - Keepalive
@@ -1554,7 +1574,7 @@ actor FTPControlConnection {
 
 /// The client end of one FTP data connection: it carries bytes and nothing
 /// else, and it is opened only through
-/// `FTPControlConnection.openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`.
+/// `FTPControlConnection.openDataConnection(host:port:protection:owner:timeout:idleTimeout:awaitingHandshake:)`.
 actor FTPDataChannel {
     private let channel: Channel
     private let chunks: FTPLineSource
@@ -1579,21 +1599,81 @@ actor FTPDataChannel {
     /// to know whether a resumption really happened asks the server, which
     /// reads it off the wire — a client and a server asking the same library
     /// the same question would agree even when the library is wrong.
-    nonisolated let didResumeTLSSession: Bool
+    ///
+    /// On a connection opened with `awaitingHandshake: false` this is `false`
+    /// until `completeHandshake()` has run, and `resolveResumptionWithoutWaiting()`
+    /// is the way to ask earlier.
+    nonisolated var didResumeTLSSession: Bool { resumedBox.withLock { $0 } }
+    private let resumedBox: Mutex<Bool>
+
+    /// `nil` once the handshake has been completed (or was never pending):
+    /// the bound that `completeHandshake()` waits under.
+    private var pendingHandshakeTimeout: Duration?
+    /// Whether the data connection's FULL handshake presented material other
+    /// than the control connection's, read to say which rule a failed
+    /// handshake broke.
+    private let certificateOutcome: FTPDataTrustOutcome
 
     init(
         channel: Channel, chunks: FTPLineSource, deliver: AsyncStream<ByteBuffer>.Continuation,
         events: FTPChannelEvents, didResumeTLSSession: Bool, bound: TimeAmount,
-        session: NIOSSLSession?, vault: FTPSessionVault?
+        session: NIOSSLSession?, vault: FTPSessionVault?,
+        handshakeTimeout: Duration? = nil,
+        certificateOutcome: FTPDataTrustOutcome = FTPDataTrustOutcome()
     ) {
         self.channel = channel
         self.chunks = chunks
         self.deliver = deliver
         self.events = events
-        self.didResumeTLSSession = didResumeTLSSession
+        self.resumedBox = Mutex(didResumeTLSSession)
         self.bound = bound
         self.session = session
         self.vault = vault
+        self.pendingHandshakeTimeout = handshakeTimeout
+        self.certificateOutcome = certificateOutcome
+    }
+
+    /// Waits for the TLS handshake of a connection that was opened without
+    /// waiting for it, and fails exactly as the waiting open would have.
+    /// A no-op on a clear connection and on one whose handshake was awaited
+    /// at open.
+    ///
+    /// **Call it after the transfer command has been sent and its `150` has
+    /// been read, never before** — see
+    /// `FTPControlConnection.openDataConnection(host:port:awaitingHandshake:)`
+    /// for why. A failure closes the channel, returning the session, which is
+    /// what the failing open did before it threw.
+    func completeHandshake() async throws {
+        guard let timeout = pendingHandshakeTimeout else { return }
+        pendingHandshakeTimeout = nil
+        switch await events.awaitHandshake(timeout: timeout) {
+        case .some(true):
+            let resumed = (try? await channel.nioSSL_tlsSessionWasResumed().get()) ?? false
+            resumedBox.withLock { $0 = resumed }
+        case .some(false):
+            await close()
+            throw certificateOutcome.differs
+                ? FTPConnectionFailure.dataCertificateDiffers
+                : FTPConnectionFailure.tlsHandshakeFailed
+        case .none:
+            await close()
+            throw FTPConnectionFailure.timedOut
+        }
+    }
+
+    /// Settles `didResumeTLSSession` for a handshake that has already
+    /// finished, without waiting for one that has not.
+    ///
+    /// For the path where the server refused the transfer command and the body
+    /// that would have called `completeHandshake()` never ran: whether a
+    /// refused connection had resumed its session decides whether that session
+    /// goes back to the vault (`FTPDataConnection.transfer`), and a handshake
+    /// that is still running has not resumed anything yet.
+    func resolveResumptionWithoutWaiting() async {
+        guard pendingHandshakeTimeout != nil, events.settledHandshake == true else { return }
+        pendingHandshakeTimeout = nil
+        let resumed = (try? await channel.nioSSL_tlsSessionWasResumed().get()) ?? false
+        resumedBox.withLock { $0 = resumed }
     }
 
     /// Everything the server sends until it closes the connection.
@@ -2044,6 +2124,10 @@ final class FTPChannelEvents: Sendable {
         }
         if first { handshakeSignal.signal() }
     }
+
+    /// The handshake's outcome if it has already settled, without waiting:
+    /// `nil` means it has not (yet).
+    var settledHandshake: Bool? { handshakeOutcome.withLock { $0 } }
 
     /// Whether the handshake completed, or `nil` if `timeout` elapsed or the
     /// waiting task was cancelled before it settled.
