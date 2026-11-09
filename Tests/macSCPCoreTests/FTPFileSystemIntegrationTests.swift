@@ -11,7 +11,10 @@ import Testing
 ///                   (`AUTH TLS`) on the same port; port 2990: implicit FTPS;
 ///   - `ftpd-nomlsd` port 2122: the same daemon with `MLSD` neither advertised
 ///                   nor accepted, so `LIST` runs against a real server.
-/// Both log in as `testuser` / `testpass`, are chrooted so the session root is
+/// Both take `ftpitest` / `testpass` here (`testuser` is the CLI matrix's, and
+/// the two are separate on purpose: `CLIMatrixFTPITests` counts the daemon's
+/// `testuser` logins to show a diagnosis sent none, and this suite's logins
+/// must not land in that count). Chrooted, so the session root is
 /// `/`, and carry `hello.txt`, `sub/` and two symlinks the entrypoint creates.
 ///
 /// **What this suite is for, and what it is not.** `LoopbackFTPServer` carries
@@ -63,7 +66,7 @@ struct FTPFileSystemIntegrationTests {
         port: Int, security: FTPSecurityMode = .plain
     ) -> FTPConnectionConfig {
         FTPConnectionConfig(
-            host: host, port: port, username: "testuser", security: security,
+            host: host, port: port, username: "ftpitest", security: security,
             password: "testpass")
     }
 

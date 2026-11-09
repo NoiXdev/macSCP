@@ -864,8 +864,17 @@ service here.
 | `ftpd` | `macscp-test-ftpd` | **2121** control, **2990** implicit FTPS, 30000-30009 passive data | advertises `MLST` (read as `MLSD`) and `AUTH TLS` on the control port; a second listener wraps TLS before the greeting |
 | `ftpd-nomlsd` | `macscp-test-ftpd-nomlsd` | **2122** control, 30010-30019 passive data | the same daemon with `MLSD`/`MLST` neither advertised nor accepted, so `LIST` runs against a real server |
 
-Log in as `testuser` / `testpass`, the same pair as the SSH rig. The user is
-chrooted to `/srv/ftp`, which is why the session root a test uses is `/`.
+Log in as `testuser` / `testpass`, the same pair as the SSH rig, which is the
+CLI matrix's (`CLIMatrixFTP`) login. `FTPFileSystemIntegrationTests` logs in as
+`ftpitest` / `testpass` instead, on the same home: the matrix's dial case counts
+the daemon's `testuser` logins to show a diagnosis sent no password, and the two
+suites' logins must not land in one count. The daemon writes that journal itself
+(`ExtendedLog`, `/var/log/proftpd-logins.log`, lines of the form
+`PASS testuser 230`); `docker exec macscp-test-ftpd cat /var/log/proftpd-logins.log`
+reads it. `/var/log/proftpd.log` (`SystemLog`) stays EMPTY, measured 2026-11-09:
+the daemon's session lines go to the container's stderr, which is what
+`docker compose logs` shows. The users are chrooted to `/srv/ftp`, which is why
+the session root a test uses is `/`.
 It holds `hello.txt` and `sub/` (copied from the shared `./seed`, read-only
 there, never overwriting what is already in the container) and two symlinks
 the entrypoint creates, `link-to-hello` and `link-to-sub`. The symlinks are

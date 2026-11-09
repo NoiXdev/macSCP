@@ -29,8 +29,17 @@ fi
 # One virtual user, the rig's usual pair. Rewritten each start so a changed
 # password here is the password in force.
 hash=$(openssl passwd -6 testpass)
-printf 'testuser:%s:1000:1000::/srv/ftp:/bin/false\n' "$hash" > /etc/proftpd/ftpd.passwd
-printf 'testgroup:x:1000:testuser\n' > /etc/proftpd/ftpd.group
+# Two users on the same home and the same password: `testuser` is the one the
+# CLI matrix (CLIMatrixFTP) and the rig's documentation use, and `ftpitest` is
+# FTPFileSystemIntegrationTests'. They are separate so a login journal line
+# `USER testuser: Login successful` can only come from the matrix: the case that
+# counts those lines to show a diagnosis sent no password would otherwise race
+# every login the integration suite makes on the same daemon.
+{
+    printf 'testuser:%s:1000:1000::/srv/ftp:/bin/false\n' "$hash"
+    printf 'ftpitest:%s:1000:1000::/srv/ftp:/bin/false\n' "$hash"
+} > /etc/proftpd/ftpd.passwd
+printf 'testgroup:x:1000:testuser,ftpitest\n' > /etc/proftpd/ftpd.group
 chmod 600 /etc/proftpd/ftpd.passwd
 
 # Seeding: the repository's own ./seed (mounted read-only) plus the entries a

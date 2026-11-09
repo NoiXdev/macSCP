@@ -1040,20 +1040,32 @@ enum CLIMatrixCases {
             #expect(
                 known.dial.outcome == skipped,
                 "the dial came back \(known.dial.outcome) on \(kind.rawValue) a second time")
-            // The password stayed off the wire both times. The server's own
+            // The password stayed off the wire both times. The daemon's own
             // login journal is the witness: output the CLI printed cannot say
-            // what the CLI sent. The positive control comes AFTER the
-            // equality and is what makes it mean anything -- a login this
-            // test makes itself must be counted, or the count is looking at
-            // nothing.
-            let loginsAfterTheDiagnoses = try await Self.rigLoginCount()
-            let loggedIn = loginsAfterTheDiagnoses != loginsBeforeTheDiagnoses
-            #expect(loggedIn == false, "a diagnosis logged in to the plain rig")
+            // what the CLI sent.
+            //
+            // **Ordered by the journal, not by a clock.** The daemon writes a
+            // login's line after it has answered, so a read straight after
+            // the diagnoses could precede a line that is coming. So the test
+            // makes ONE login of its own (the positive control, which also
+            // proves the count sees a login at all) and waits until the
+            // journal shows exactly that one beyond the starting count. The
+            // journal is in the order the daemon wrote it: a login a
+            // diagnosis had made would be in the file BEFORE the control's
+            // line, so the count would read two beyond, never one.
             try await Self.logInOnceToThePlainRig(rig)
-            let afterTheControl = try await Self.rigLoginCount()
-            #expect(
-                afterTheControl == loginsAfterTheDiagnoses + 1,
-                "the rig's login journal did not count a login it was sent")
+            try await pollUntil("the rig's login journal to count the control login") {
+                (try? await Self.rigLoginCount()).map { $0 > loginsBeforeTheDiagnoses } == true
+            }
+            let counted = try await Self.rigLoginCount()
+            let theDiagnosesLoggedIn = counted != loginsBeforeTheDiagnoses + 1
+            #expect(theDiagnosesLoggedIn == false, "a diagnosis logged in to the plain rig")
+            // The isolation control: a login as the integration suite's user
+            // is not in this count, which is what lets that suite run beside
+            // this case without reddening it.
+            try await Self.logInOnceToThePlainRig(rig, as: "ftpitest")
+            let theOtherUsersLoginMoved = try await Self.rigLoginCount() != counted
+            #expect(theOtherUsersLoginMoved == false, "another user's login was counted as testuser's")
         } else {
             #expect(
                 known.dial.outcome == ok,
@@ -1066,29 +1078,44 @@ enum CLIMatrixCases {
         let status: Int32
     }
 
-    /// How many logins the rig's plain FTP daemon has journalled since it
-    /// started: its own `USER ... Login successful.` lines, read with
-    /// `docker logs`. Counted as OCCURRENCES of the login sentence, by
-    /// splitting on it, not as lines: a count of lines is a different figure
-    /// the moment two entries share one.
+    /// How many `testuser` logins the rig's plain FTP daemon has journalled:
+    /// its own `PASS testuser 230` lines, from the file it writes them to
+    /// (`ExtendedLog` in `docker/test-server/ftpd/proftpd.conf`), read with
+    /// `docker exec ... cat`. (Withdrawn wording, verbatim: "read with
+    /// `docker logs`". That was the container's stderr, which carries the
+    /// daemon's session lines and is read by a pipe another process drains;
+    /// a file the daemon itself writes is the closer witness. The tracked
+    /// `SystemLog` file is no alternative: it stays empty, measured
+    /// 2026-11-09.)
+    ///
+    /// Counted as OCCURRENCES of that line, by splitting on it, not as lines.
+    /// **Only this case's logins can be in the count**:
+    /// `FTPFileSystemIntegrationTests` logs in as `ftpitest`, and the other
+    /// cases of this suite are serialized with it. A count of every login on
+    /// the daemon was racy by construction. The daemon writes the line AFTER
+    /// it has sent the `230`, so a read straight after a login can precede its
+    /// line: the positive control therefore waits for its line with
+    /// `pollUntil`, and the log's order is what makes the no-login check
+    /// below sound (see the case).
     private static func rigLoginCount() async throws -> Int {
         let result = try await SubprocessRunner.run(
             URL(fileURLWithPath: "/usr/local/bin/docker"),
-            arguments: ["logs", "macscp-test-ftpd"])
+            arguments: ["exec", "macscp-test-ftpd", "cat", "/var/log/proftpd-logins.log"])
         guard result.status == 0 else {
             throw RigJournalUnreadable(status: result.status)
         }
-        let text = result.stdoutText + result.stderrText
-        return text.components(separatedBy: "USER testuser: Login successful").count - 1
+        return result.stdoutText.components(separatedBy: "PASS testuser 230").count - 1
     }
 
     /// One login of the kind a diagnosis must not make, made on purpose and
     /// by the test, so `rigLoginCount()` has something it must count.
-    private static func logInOnceToThePlainRig(_ rig: CLIMatrix) async throws {
+    private static func logInOnceToThePlainRig(
+        _ rig: CLIMatrix, as username: String? = nil
+    ) async throws {
         let config = try #require(rig.session.ftp)
         let fileSystem = try await FTPFileSystem.connect(
             FTPConnectionConfig(
-                host: config.host, port: config.port, username: config.username,
+                host: config.host, port: config.port, username: username ?? config.username,
                 // The tracked fixture's own pair (`CLIMatrix.fixture`), the
                 // one the rig's compose file spells out.
                 security: config.security, password: "testpass"),
@@ -2411,7 +2438,7 @@ struct CLIMatrixWebDAVITests {
 /// no longer takes the output's word for it: it counts the daemon's own login
 /// journal before and after both diagnoses and requires the count not to
 /// move, with a login the test makes itself as the positive control.
-@Suite("CLIMatrixFTP", .enabled(if: rigIsEnabled), .serialized)
+@Suite("CLIMatrixFTP", .enabled(if: rigIsEnabled), .serialized, .timeLimit(.minutes(5)))
 struct CLIMatrixFTPITests {
     static let kind: ConnectionKind = .ftp
 
