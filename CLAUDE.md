@@ -244,7 +244,9 @@ couples the bound to the suite's size: a run twice as long makes five
 minutes marginal again, so the figure above is a measurement with a shelf
 life, not a constant. And the 27 `.minutes(2)` bounds were not touched —
 no run has recorded one firing, though 120 s is 0.91x this run's total,
-which makes them the next candidates rather than a cleared set.
+which makes them the next candidates rather than a cleared set. (They
+fired on 2026-11-09 and the ungated ones were raised; see the 2026-11-09
+update at the end of this section.)
 
 Rule: assert the outcome and the ordering a bound is supposed to
 produce, not how long producing it took. A floor (`elapsed >= …`, "this
@@ -252,6 +254,132 @@ did not return early") is fine — a slow machine cannot defeat it, only a
 broken one. A ceiling always can — including the one a `.timeLimit`
 states, which is a ceiling on a clock no assertion chose, and which the
 2026-10-30 update above measures firing on healthy tests.
+
+**2026-11-09 update: the two-minute bounds fired, and so did a protocol
+deadline no assertion chose.** Two runs of the gate on `macos-latest`,
+three cores:
+
+| run | head | summary line |
+|---|---|---|
+| 41974805488 | `4dfcec6b`, docs only, before any FTP code | 8469 tests in 681 suites failed after 172.101 seconds with 75 issues (including 2 warnings) |
+| 42606504360 | `502965ce` | 8800 tests in 700 suites failed after 212.296 seconds with 83 issues (including 2 warnings) |
+
+In the first, 46 tests failed and all 46 recorded `Time limit was
+exceeded: 120.000 seconds`. In the second, 53 failed: 47 on that limit and
+6 on an FTP deadline, below. Per run, with `<id>` replaced:
+
+    gh run view <id> --repo NoiXdev/macSCP --log | /usr/bin/grep '✘ Test .*Time limit was exceeded: 120.000 seconds' | /usr/bin/grep -o 'Test [A-Za-z0-9_]*(' | sort -u | wc -l
+    gh run view <id> --repo NoiXdev/macSCP --log | /usr/bin/grep -o '✘ Test [A-Za-z0-9_]*(.*) failed after' | /usr/bin/grep -o 'Test [A-Za-z0-9_]*(' | sort -u | wc -l
+
+The `sort -u` is load-bearing: the log carries every verdict twice, once
+from the test step and once from the verdicts step. So is the `0-9`: a
+first count of the second run read 46 and 52, because a class without
+digits cannot match `binaryAndNonUTF8SidesEachRefuseWithTheirOwnReason`
+and drops it without a word. No `.timeLimit` of any other figure fired in
+either run. 120 s was 0.57x of the later total; the 2026-10-30 update
+had named these bounds the next candidates, and they were.
+
+What was raised, in Tests only. Two counting commands, because the one
+the 2026-10-30 update's figures came from also counts the comments that
+quote a bound:
+
+    /usr/bin/grep -rn -o '\.timeLimit(\.minutes([0-9]*))' Tests | sed 's/.*minutes(\([0-9]*\)).*/\1/' | sort | uniq -c
+    /usr/bin/grep -rh -o '^[^/]*\.timeLimit(\.minutes([0-9]*))' Tests | sed 's/.*minutes(\([0-9]*\)).*/\1/' | sort | uniq -c
+
+The second keeps only code (a `/` before the match is a comment; the raw
+minus the code count equals the comment lines, which is its positive
+control). Before this change, `git grep -h -o` with each pattern on `HEAD`
+printed raw `2 1`, `2 10`, `27 2`, `2 3`, `169 5`, and code `2 10`,
+`23 2`, `2 3`, `155 5`. After it, raw `2 1`, `2 10`, `9 2`, `2 3`,
+`190 5`, and code `2 10`, `4 2`, `1 3`, `175 5`. That is 19 ungated
+two-minute traits and 1 ungated three-minute trait
+(`ConnectMainActorLivenessTests`, which on its own, serialized, reported
+`passed after 212.088 seconds` in run 42606504360) raised to five minutes.
+Left alone are the 4 gated two-minute traits (`CLIMatrixITests` twice,
+`CitadelShellIntegrationTests`, `TransportCloseRigTests`), the 1 gated
+three-minute trait (`ThroughputRigTests`) and both ten-minute bounds:
+nothing gated runs in CI (`grep -c MACSCP_ITEST .github/workflows/ci.yml`
+prints 0), so the wall clock this paragraph is about is not theirs.
+
+Why five and not ten. The step budget is not the 960 s the 2026-10-30
+update divided by: `.github/workflows/ci.yml` has read
+`timeout-minutes: 20` (1200 s) on the Unit-Tests step since 2026-10-31,
+and that step also compiles the test targets before the first test runs.
+In run 42606504360 the step's first line is stamped 11:15:00.588213 and
+`Test run started.` 11:23:55.107682, 534.519 s later, and the step took
+747 s:
+
+    gh run view 42606504360 --repo NoiXdev/macSCP --log | /usr/bin/grep -e 'Unit-Tests.*##\[group\]Run set -o pipefail' -e 'Test run started'
+    gh api repos/NoiXdev/macSCP/actions/runs/42606504360/jobs --jq '.jobs[].steps[] | select(.name=="Unit-Tests") | "\(.conclusion) \((.completed_at|fromdateiso8601) - (.started_at|fromdateiso8601))s"'
+
+A bound's clock therefore starts about 534.5 s into a 1200 s step. Five
+minutes (300 s) is 1.41x of 212.296 s and fires by 834.519 s into the
+step, 0.70x of its budget. Ten minutes (600 s) would be 2.83x, but fires
+by 1134.519 s, 0.95x, and a case that started more than 65.481 s into the
+suite would outlive the step and lose its name, which is the failure a
+bound exists to prevent. Ten is not available under this step budget.
+The largest whole-minute figure that still fires before the step ends for
+a case started at the suite's last second is seven
+(1200 − 534.519 − 212.296 = 453.185 s); it is named here as the next
+decision, not taken.
+
+**So the 175 five-minute bounds are marginal now**, at 1.41x where the
+2026-10-30 update had 2.3x. The suite went 131.530 → 172.101 → 212.296 s
+over these three runs; whether it keeps growing at that pace is
+unmeasured. Raising the five-minute bounds meaningfully needs the step
+budget raised first, which is `ci.yml`'s decision and was not changed here.
+
+**A protocol deadline on a loopback dial is a ceiling too.** The six other
+reds of run 42606504360 were FTP cases that dialled the in-process server
+with `timeout: .seconds(30)`: `FTPControlConnectionTests`'
+`aTransferHoldsTheTurnAcrossBothOfItsReplies`,
+`theGreetingIsReadBeforeAnyCommandIsSent`,
+`typeIIsIssuedAndTypeAIsNeverSent` and
+`aCredentialCarryingALineBreakIsRefusedAsACredential`, and
+`FTPFileSystemTests`' `checksumAnswersUnavailableOnThisConnection` and
+`setPermissionsSendsSITECHMODAndSurfacesARefusalAsAPerFileError`. Each
+reported `failed after` between 134.528 and 135.623 seconds, with
+`timedOut` or "did not answer in time" where a refusal, a connection or a
+per-file error was due:
+
+    gh run view 42606504360 --repo NoiXdev/macSCP --log | /usr/bin/grep -e 'failed after 13[45]\.' | /usr/bin/grep -o 'Test [A-Za-z0-9_]*(' | sort -u
+
+None of them asserts a timeout. A deadline handed to the code under test
+is a bound the test did not choose to assert on, so on a starved runner it
+fires exactly like a `.timeLimit`, only with a wrong outcome instead of a
+named hang. The fix is one constant, `LoopbackFTPDeadline` in
+`Tests/macSCPCoreTests/Support/`: the dial at 600 s (the figure
+`aDataReadIsBoundedByItsOwnIdleTimeoutAndNotByTheDialsTimeout` already
+used), and a tuning that raises the shipped 60 s reply-idle and 120 s
+data-idle bounds to the same, since both sit under the 135 s stall too.
+It replaces the short figure at 21 sites in six test files, and one more
+site, the `AUTH` answered with `334` case, dropped its `.seconds(2)` to
+fall through to the helper default, because it asserts a refusal and not
+a timeout. Counted on the code lines, where each use now has its own line:
+
+    /usr/bin/grep -rh -o '^[^/]*LoopbackFTPDeadline\.[a-z]*' Tests --include='*Tests.swift' | /usr/bin/grep -o 'LoopbackFTPDeadline\.[a-z]*$' | sort | uniq -c
+
+prints `22 LoopbackFTPDeadline.dial` and `9 LoopbackFTPDeadline.tuning`.
+Kept short, because each ASSERTS the timeout it sets:
+`theConnectTimeoutIsHonouredRatherThanDropped` (400 ms, `.failed(.timedOut)`
+and a floor), `aReplyBoundThatFiresClosesTheConnection` (200 ms reply
+idle), `aDataReadIsBoundedByItsOwnIdleTimeoutAndNotByTheDialsTimeout`
+(50 ms data idle) and the two `LoopbackFTPServerTests` cases expecting
+`noReplyWithin(milliseconds: 200)`. Not changed and still open: the
+test-side `LoopbackFTPClient`'s 180 s default and the nine
+`replyBound: .seconds(30)` sites in `LoopbackFTPServerTests`
+(`/usr/bin/grep -o 'replyBound: \.seconds(30)' Tests/macSCPCoreTests/LoopbackFTPServerTests.swift | wc -l`).
+None fired in run 42606504360, but by this paragraph's own rule they are
+ceilings, and the 180 s default is built to sit between the suite's wall
+clock and its suite's five-minute bound — a window that is now 212.296 to
+300 s, which is the marginal five-minute bound above arriving from
+another side. The client's own doc comment carries the details.
+
+The shelf life, restated with the new figure: five minutes is 1.41x of
+the 212.296 s this suite took on 2026-11-09, and a run 1.41x as long makes
+it a ceiling again. The rule above is unchanged — a bound that can fire
+on a healthy run is not a hang bound — and the deadline finding widens
+what counts as one: any deadline a test passes in and does not assert on.
 
 ## Architecture invariants
 
