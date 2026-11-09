@@ -1616,8 +1616,8 @@ actor FTPDataChannel {
     /// the same question would agree even when the library is wrong.
     ///
     /// On a connection opened with `awaitingHandshake: false` this is `false`
-    /// until `completeHandshake()` (or, after a `425`/`522`,
-    /// `settleHandshakeAfterRefusal()`) has run.
+    /// until `completeHandshake()` (or, after a refusal,
+    /// `certificateVerdictAfterRefusal()`) has run.
     nonisolated var didResumeTLSSession: Bool { resumedBox.withLock { $0 } }
     private let resumedBox: Mutex<Bool>
 
@@ -1676,36 +1676,34 @@ actor FTPDataChannel {
         }
     }
 
-    /// For the path where the server REFUSED the transfer command with `425`
-    /// or `522`, so the body that would have called `completeHandshake()`
-    /// never ran: waits for the handshake under the open bound and answers
-    /// the failure it ended in, or `nil` when it completed (and sets
-    /// `didResumeTLSSession`) or did not settle in time.
+    /// For the path where the server REFUSED the transfer command, so the body
+    /// that would have called `completeHandshake()` never ran. Never waits.
     ///
-    /// The failure is the one `completeHandshake()` would have thrown:
-    /// `dataCertificateDiffers` when the data connection presented material
-    /// other than its control connection's (Ruling T5.1), else
-    /// `tlsHandshakeFailed`. Without it the refusal reached the caller as
-    /// `transferRefused(425)` and the certificate verdict was lost. Does not
-    /// close the channel; the caller does.
+    /// Answers `dataCertificateDiffers` when the verification callback has
+    /// already recorded that the data connection presented material other than
+    /// its control connection's (Ruling T5.1), and `nil` otherwise: a refusal
+    /// that is not about the certificate stays the refusal the server wrote.
+    /// And it settles `didResumeTLSSession` from a handshake that has
+    /// ALREADY completed, which the `522` retry needs to know whether the
+    /// refused session was a resumed one; a handshake that has not settled is
+    /// read as not resumed, so that session goes back to the vault, which
+    /// prefers a never-used one on the retry anyway. Does not close the
+    /// channel; the caller does.
     ///
     /// A no-op on a clear connection and on one whose handshake was awaited
-    /// at open.
-    func settleHandshakeAfterRefusal() async -> FTPConnectionFailure? {
-        guard let timeout = pendingHandshakeTimeout else { return nil }
+    /// at open. (Withdrawn wording: this was `settleHandshakeAfterRefusal()`,
+    /// which waited for the handshake under the open bound and answered
+    /// `tlsHandshakeFailed` for any failure; see `FTPDataConnection.transfer`
+    /// for why neither stayed.)
+    func certificateVerdictAfterRefusal() async -> FTPConnectionFailure? {
+        guard pendingHandshakeTimeout != nil else { return nil }
         pendingHandshakeTimeout = nil
-        switch await events.awaitHandshake(timeout: timeout) {
-        case .some(true):
+        if certificateOutcome.differs { return FTPConnectionFailure.dataCertificateDiffers }
+        if events.settledHandshake == true {
             let resumed = (try? await channel.nioSSL_tlsSessionWasResumed().get()) ?? false
             resumedBox.withLock { $0 = resumed }
-            return nil
-        case .some(false):
-            return certificateOutcome.differs
-                ? FTPConnectionFailure.dataCertificateDiffers
-                : FTPConnectionFailure.tlsHandshakeFailed
-        case .none:
-            return nil
         }
+        return nil
     }
 
     /// Everything the server sends until it closes the connection.

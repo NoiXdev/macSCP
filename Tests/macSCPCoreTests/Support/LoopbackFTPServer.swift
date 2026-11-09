@@ -45,6 +45,17 @@ struct LoopbackFTPReceivedCommand: Sendable, Equatable {
 /// One completed TLS handshake the server took part in, and whether it
 /// resumed an earlier session (read off the wire, see
 /// `TLSResumptionInspector`).
+/// How a server that refuses every protected transfer with an opening `425`
+/// treats the data connection it was just connected to
+/// (`LoopbackFTPServer(refusesProtectedTransfersWith425:)`).
+enum LoopbackDataRefusal: Sendable {
+    /// Closes it before any handshake: what vsftpd's "425 Security: Bad IP
+    /// connecting." does (it refuses after `accept()`, before `SSL_accept`).
+    case closing
+    /// Answers `425` and leaves the socket open, never handshaking on it.
+    case leavingOpen
+}
+
 struct LoopbackFTPHandshake: Sendable, Equatable {
     enum Connection: Sendable, Equatable {
         case control
@@ -230,6 +241,10 @@ actor LoopbackFTPServer {
     /// control connection's tickets, so every data handshake here is a FULL
     /// one, which is the only kind the certificate comparison runs on.
     private let dataConnectionsPresentAnotherCertificate: Bool
+    /// When set, every transfer over a PROTECTED data connection is refused
+    /// with `425` before the handshake is touched, and the data connection is
+    /// treated as the value says. A refusal that has nothing to do with TLS.
+    private let refusesProtectedTransfersWith425: LoopbackDataRefusal?
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let passiveDepth: Int
@@ -354,9 +369,11 @@ actor LoopbackFTPServer {
         offersSiteCommands: Bool = true,
         advertisesSiteChmodInFEAT: Bool = false,
         dataTLSStartsAfterCommand: Bool = false,
-        dataConnectionsPresentAnotherCertificate: Bool = false
+        dataConnectionsPresentAnotherCertificate: Bool = false,
+        refusesProtectedTransfersWith425: LoopbackDataRefusal? = nil
     ) {
         self.security = security
+        self.refusesProtectedTransfersWith425 = refusesProtectedTransfersWith425
         self.dataConnectionsPresentAnotherCertificate = dataConnectionsPresentAnotherCertificate
         self.dataTLSStartsAfterCommand = dataTLSStartsAfterCommand
         self.advertisesMLSD = advertisesMLSD
@@ -403,7 +420,8 @@ actor LoopbackFTPServer {
             offersSiteCommands: offersSiteCommands,
             advertisesSiteChmodInFEAT: advertisesSiteChmodInFEAT,
             requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
-            passiveDepth: passiveDepth, dataTLSStartsAfterCommand: dataTLSStartsAfterCommand)
+            passiveDepth: passiveDepth, dataTLSStartsAfterCommand: dataTLSStartsAfterCommand,
+            refusesProtectedTransfersWith425: refusesProtectedTransfersWith425)
         let state = self.state
         let context = self.context
         let dataContext = self.dataContext
@@ -845,6 +863,7 @@ actor LoopbackFTPServer {
         let credentials: LoopbackFTPCredentials
         let passiveDepth: Int
         let dataTLSStartsAfterCommand: Bool
+        let refusesProtectedTransfersWith425: LoopbackDataRefusal?
     }
 
     /// Delivers a control channel to the accept loop, or, if the loop's stream has
@@ -1884,6 +1903,20 @@ final class LoopbackFTPSession: @unchecked Sendable {
         if configuration.requiresTLSSessionReuse, !dataProtected {
             await listener.discard()
             try await send(522, "Data connections must be encrypted.")
+            return .keepGoing
+        }
+
+        if dataProtected, let refusal = configuration.refusesProtectedTransfersWith425 {
+            switch refusal {
+            case .closing:
+                await listener.discard()
+            case .leavingOpen:
+                // Kept, not dropped: a connection nobody consumes aborts the
+                // process when it deinitialises, and `releasePassiveListener()`
+                // consumes whatever is still listed when the session ends.
+                passiveListeners.append(listener)
+            }
+            try await send(425, "Security: Bad IP connecting.")
             return .keepGoing
         }
 

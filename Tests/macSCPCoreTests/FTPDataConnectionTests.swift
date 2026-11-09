@@ -60,7 +60,8 @@ struct FTPDataConnectionTests {
     private static func connect(
         _ server: LoopbackFTPServer, host: String, port: Int,
         security: FTPSecurityMode = .plain,
-        decider: CertificateDecider = .refusing
+        decider: CertificateDecider = .refusing,
+        timeout: Duration = .seconds(30)
     ) async throws -> FTPControlConnection {
         let credentials = server.credentials
         return try await FTPControlConnection.connect(
@@ -69,7 +70,7 @@ struct FTPDataConnectionTests {
                 password: ""),
             password: credentials.password,
             certificateDecider: decider,
-            timeout: .seconds(30),
+            timeout: timeout,
             trustStore: nil)
     }
 
@@ -790,6 +791,61 @@ struct FTPDataConnectionTests {
         #expect(outcome.refused == .failed(.dataCertificateDiffers))
         #expect(outcome.bytes == 0)
         #expect(outcome.afterwards == 200)
+    }
+
+    // MARK: - A refusal that is not about the certificate
+
+    /// An opening `425` that has nothing to do with TLS stays
+    /// `transferRefused(425)` on a protected session: in step, the control
+    /// connection kept, and not a connection failure.
+    ///
+    /// The refusal the reviewer named is vsftpd's "425 Security: Bad IP
+    /// connecting.", written after `accept()` and before any handshake. The
+    /// first cut of the Ruling T5.1 fix read the data connection's failed
+    /// handshake for every `425` and `522`, so this arrived as
+    /// `tlsHandshakeFailed`, a connection loss: the pool dropped an in-step
+    /// control connection and the queue kept the job as resumable, to meet the
+    /// same refusal again. Three shapes of the server: closing the data
+    /// socket with the handshake held (the handshake FAILS on the client),
+    /// closing it with the handshake free-running (the client's handshake may
+    /// or may not have finished first, so the case does not choose), and
+    /// leaving it open and never handshaking (the handshake never settles).
+    /// The last one is also a hang guard: its connect timeout is an hour, so
+    /// a refusal that waited for the handshake would sit until the suite's own
+    /// limit rather than for an answer.
+    @Test(arguments: [
+        (LoopbackDataRefusal.closing, true), (LoopbackDataRefusal.closing, false),
+        (LoopbackDataRefusal.leavingOpen, true),
+    ])
+    func aRefusalThatIsNotAboutTheCertificateStaysARefusal(
+        refusal: LoopbackDataRefusal, handshakeAfterCommand: Bool
+    ) async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            dataTLSStartsAfterCommand: handshakeAfterCommand,
+            refusesProtectedTransfersWith425: refusal)
+        await server.seedFile(Self.seededName, contents: Self.seeded)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS, decider: Self.accepting,
+                timeout: refusal == .leavingOpen ? .seconds(3600) : .seconds(30))
+            let refused = await Self.outcome {
+                try await FTPDataConnection.transfer(
+                    "RETR", argument: Self.seededName, on: connection
+                ) { channel in
+                    _ = try await channel.readToEnd()
+                }
+            }
+            // Still in step, and still usable.
+            let afterwards = try await connection.send("NOOP", argument: nil)
+            await connection.close()
+            return (refused: refused, afterwards: afterwards.code)
+        }
+        #expect(outcome.refused == .failed(.transferRefused(code: 425)))
+        #expect(outcome.afterwards == 200)
+        // The pool's decision rests on this and on nothing else: a refusal the
+        // server answered leaves the connection in step.
+        #expect(FTPConnectionFailure.transferRefused(code: 425).leavesConnectionInStep)
     }
 
     // MARK: - A refused session resumption

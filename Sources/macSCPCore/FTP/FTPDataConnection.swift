@@ -277,23 +277,41 @@ enum FTPDataConnection {
                 // second one — so the channel is still this function's to
                 // close.
                 let refusedTheSession = replies.opening.code == Self.sessionReuseRefused
-                // `425` and `522` are what a server answers about a data
-                // connection it HAS touched, and it closes the connection
-                // after either, so the handshake settles promptly and the
-                // wait is bounded by the open timeout. Any other refusal
-                // (`550` and its kind) is about the command, the server never
-                // touched the connection, and its handshake says nothing: it
-                // is not waited for and not read.
+                // **Ruling T5.1's verdict arrives here when the server refuses
+                // instead of answering `150`**, because the handshake no
+                // longer settles before the command is sent. It is read
+                // WITHOUT waiting, and only `dataCertificateDiffers` is
+                // preferred to the refusal.
                 //
-                // **This is where Ruling T5.1's verdict arrives when the
-                // server refuses instead of answering `150`**, because the
-                // handshake no longer settles before the command is sent. A
-                // data connection that presented another certificate is
-                // reported as that, ahead of the refusal the server wrote
-                // about the connection it then closed: the security-specific
-                // reading is the one the caller acts on.
-                let touched = refusedTheSession || replies.opening.code == Self.dataConnectionFailed
-                if touched, let failure = await channel.settleHandshakeAfterRefusal() {
+                // Why a read and not a wait: whether the certificate differed
+                // is decided in the verification callback, when the server's
+                // Certificate message arrives. A server that answers `425`
+                // BECAUSE that handshake failed (`LoopbackFTPServer` does, in
+                // both of its orderings) can only have learned of the failure
+                // from the client's alert, which is sent after the callback
+                // ran, so by the time its `425` is read the verdict is
+                // already recorded. A server that refused without
+                // handshaking leaves nothing to wait for, and one that
+                // leaves the socket open would make a wait last the whole
+                // open timeout. What is NOT claimed: that every server that
+                // writes a `425` has finished with the handshake first. One
+                // that wrote it concurrently with its Certificate message
+                // would be read as the refusal it also is, with nothing sent
+                // to the wrong peer (the body never ran).
+                //
+                // A handshake that merely FAILED is not preferred: a `425`
+                // refused before any handshake (vsftpd's "Security: Bad IP
+                // connecting." is the reported case) closes the socket, and
+                // reading that as a TLS failure turned an answered refusal
+                // into a connection loss (the first cut of this fix did).
+                // (Withdrawn wording, verbatim: "`425` and `522` are what a
+                // server answers about a data connection it HAS touched, and
+                // it closes the connection after either, so the handshake
+                // settles promptly and the wait is bounded by the open
+                // timeout." Neither half was measured: the first is false of
+                // the refusal just named, and the second is false of a server
+                // that leaves the socket open.)
+                if let failure = await channel.certificateVerdictAfterRefusal() {
                     await channel.close()
                     throw failure
                 }
