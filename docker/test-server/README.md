@@ -851,3 +851,100 @@ against a source address across failed logins) and was never the one
 firing here; reading it as "no sshd in the rig throttles" is what kept
 that row's premise standing. Check both, and check the log rather than the
 config file — the config states an intent, the log states what happened.
+
+## The FTP rig (2026-11-09)
+
+Two services off ONE image, built from `ftpd/Dockerfile` (ProFTPD on
+`alpine:3.22`), for the gated `FTPFileSystemIntegrationTests` and the
+`CLIMatrixFTP` suite. Both started from the main checkout only, like every
+service here.
+
+| service | container | host ports (all on `127.0.0.1`) | what it is |
+|---|---|---|---|
+| `ftpd` | `macscp-test-ftpd` | **2121** control, **2990** implicit FTPS, 30000-30009 passive data | advertises `MLST` (read as `MLSD`) and `AUTH TLS` on the control port; a second listener wraps TLS before the greeting |
+| `ftpd-nomlsd` | `macscp-test-ftpd-nomlsd` | **2122** control, 30010-30019 passive data | the same daemon with `MLSD`/`MLST` neither advertised nor accepted, so `LIST` runs against a real server |
+
+Log in as `testuser` / `testpass`, the same pair as the SSH rig. The user is
+chrooted to `/srv/ftp`, which is why the session root a test uses is `/`.
+It holds `hello.txt` and `sub/` (copied from the shared `./seed`, read-only
+there, never overwriting what is already in the container) and two symlinks
+the entrypoint creates, `link-to-hello` and `link-to-sub`. The symlinks are
+NOT in `./seed`: the other services mount that directory too, and a symlink
+in it would change what their listings report.
+
+**Why a build, and why ProFTPD.** No published image offers `MLSD` plus
+`AUTH TLS` on arm64 (spec section 9, which cites the 2026-09-02 candidates),
+and `sshd/Dockerfile` is the precedent for the rig building one of its own.
+ProFTPD does everything in one binary and one configuration file; other
+daemons were not tried. Its TLS certificate is generated at container start
+(`/run/ftpd`), never committed, like the WebDAV one.
+
+**Ruling T11.1, and its fallback was not needed.** The spec asks for two
+SERVICES; the plan named one Dockerfile. Two services off one image works
+because the daemon's feature advertisement is a configuration switch:
+`FTPD_MLSD=off` makes the entrypoint append `FactsAdvertise off` and a
+`<Limit MLSD MLST> DenyAll` block, so a client that sent `MLSD` anyway would
+be refused instead of quietly succeeding past the fallback it should take.
+Environment (`FTPD_PORT`, `FTPD_IMPLICIT_PORT`, `FTPD_PASV_MIN`,
+`FTPD_PASV_MAX`, `FTPD_MLSD`) is the whole difference between the two.
+
+**Passive data connections need the published ports and
+`MasqueradeAddress 127.0.0.1`.** Two things that were wrong on the first
+start, both measured: a `<VirtualHost>` does not inherit the main server's
+`PassivePorts`, so the implicit listener answered `EPSV` with ports 1658 and
+2432 that the compose file does not publish (the dial died with "The
+connection to the FTP server ended"); and ProFTPD's `/dev/stderr` log target
+is refused (it is a symbolic link), so the daemon logs to files that the
+entrypoint follows with `tail -F`, which is what `docker compose logs` shows.
+The trace (`Trace tls:10 command:5 response:5`) is on, because the TLS
+measurements below were read from it.
+
+**ProFTPD's TLS defaults are the demanding ones, and the rig keeps them.**
+Data connections must resume the control connection's TLS session
+(`NoSessionReuseRequired` is NOT set), and a data connection's handshake
+starts only after the daemon has read the transfer command. Both found real
+defects in the client, which the in-process `LoopbackFTPServer` could not
+(it answered a ClientHello the moment a connection opened, and wrote an
+`MLSD` line in `FEAT` that no real server writes); `git log` for the two
+`fix(core)` commits of FTP plan Task 11 has the figures.
+
+### The pin is a debt with a review date
+
+`alpine:3.22` is pinned by tag; its index digest on 2026-11-09, from
+`docker buildx imagetools inspect alpine:3.22`, was
+`sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f`,
+and the release it resolved to was 3.22.8 (`cat /etc/alpine-release` in the
+image) with ProFTPD 1.3.9b. The package is whatever the tag carries, so a
+rebuild on a later day may carry a later ProFTPD under the same tag.
+
+**Review at every release and before any change to the Dockerfile**, the
+discipline CLAUDE.md's "Forks are a debt with a review date" states for
+forks, applied by analogy: read ProFTPD's published security advisories for
+the version in the image, and ask whether a newer Alpine tag exists. **Not
+done on 2026-11-09**: the advisories were not read, so this pin carries no
+advisory check at all yet. The image is a loopback-only test container, never
+exposed, but that is the reason the review can be light, not a reason to
+skip it.
+
+### Proof, measured 2026-11-09
+
+Brought up from the main checkout with
+`docker compose -f docker/test-server/compose.yml up -d ftpd ftpd-nomlsd`.
+`FEAT` on each (`printf 'USER testuser\r\nPASS testpass\r\nFEAT\r\nQUIT\r\n'`
+to the control port with `nc -w 2`): `ftpd` lists `AUTH TLS`, `PBSZ`, `PROT`,
+`REST STREAM`, `SIZE`, `MDTM` and one line
+`MLST modify*;perm*;size*;type*;unique*;UNIX.group*;UNIX.groupname*;UNIX.mode*;UNIX.owner*;UNIX.ownername*;`
+and NO line named `MLSD`; `ftpd-nomlsd` lists the same without `MLST` (and without `MFF`,
+`MFMT` and `TVFS`, which go with it),
+and answers `MLST /hello.txt` with `550 Unable to handle command`.
+
+A symlink under `MLSD` is spelled `type=OS.unix=symlink`; under `LIST` it is
+`l` at column 0 with `name -> target`. The row of `docs/BACKLOG.md` whose
+title begins "An FTP server's MLSD symlink spelling is unmeasured" carries
+the commands and what was not asked.
+
+Restart: `docker compose -f docker/test-server/compose.yml stop ftpd
+ftpd-nomlsd` and then `up -d` again against the same containers leaves one
+more `STARTUP` line in each log, no error, and the same four entries in the
+root listing. The seeding copies by name and never overwrites, the symlinks
+are created only when absent, and the passwd file is rewritten each start.

@@ -358,3 +358,60 @@ services:
     volumes:
       - ./sftpgo:/seed:ro
     entrypoint: ["/bin/sh", "/seed/init.sh"]
+
+  # The FTP rig (FTP plan Task 11, 2026-11-09): ProFTPD, built from
+  # ./ftpd/Dockerfile because no published image offers MLSD plus AUTH TLS on
+  # arm64 (spec section 9; README.md, "The FTP rig"). Two services off the
+  # SAME image, which is Ruling T11.1: the spec asks for two services, and
+  # the daemon's MLSD advertisement is a configuration switch (`FTPD_MLSD`),
+  # so a second Dockerfile would carry nothing the environment cannot.
+  #
+  # `ftpd` advertises MLSD and offers explicit FTPS on its control port
+  # (AUTH TLS, upgraded after the greeting) plus implicit FTPS on 2990.
+  # The control port 2121 is what `CLIMatrix.fixture(for:name:)` dials, plain
+  # on purpose (the CLI hands every connect `certificate: .refusing`, so a
+  # self-signed endpoint is unreachable from the binary).
+  #
+  # Passive data connections need published ports and a MasqueradeAddress of
+  # 127.0.0.1 (set in ./ftpd/proftpd.conf): the daemon would otherwise name
+  # its container address in a PASV reply. 30000-30009 here, 30010-30019 for
+  # `ftpd-nomlsd`; every host port below was free on 2026-11-09
+  # (`lsof -nP -iTCP:<port> -sTCP:LISTEN` printed nothing for 2121, 2122,
+  # 2990 and the two passive ends of each range).
+  # The certificate is generated at container start, never committed.
+  # Loopback only, like `sshd-nosftp`.
+  ftpd:
+    build: ./ftpd
+    image: macscp-test-ftpd:alpine3.22
+    container_name: macscp-test-ftpd
+    ports:
+      - "127.0.0.1:2121:2121"
+      - "127.0.0.1:2990:2990"
+      - "127.0.0.1:30000-30009:30000-30009"
+    environment:
+      - FTPD_PORT=2121
+      - FTPD_IMPLICIT_PORT=2990
+      - FTPD_PASV_MIN=30000
+      - FTPD_PASV_MAX=30009
+      - FTPD_MLSD=on
+    volumes:
+      - ./seed:/seed:ro
+
+  # The same image with MLSD switched off (advertisement AND command), so
+  # `LIST` runs against a real daemon rather than only against
+  # LoopbackFTPServer. Port 2122; no implicit listener.
+  ftpd-nomlsd:
+    build: ./ftpd
+    image: macscp-test-ftpd:alpine3.22
+    container_name: macscp-test-ftpd-nomlsd
+    ports:
+      - "127.0.0.1:2122:2122"
+      - "127.0.0.1:30010-30019:30010-30019"
+    environment:
+      - FTPD_PORT=2122
+      - FTPD_IMPLICIT_PORT=
+      - FTPD_PASV_MIN=30010
+      - FTPD_PASV_MAX=30019
+      - FTPD_MLSD=off
+    volumes:
+      - ./seed:/seed:ro
