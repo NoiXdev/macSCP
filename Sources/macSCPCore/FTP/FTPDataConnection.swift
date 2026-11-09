@@ -38,6 +38,9 @@ enum FTPDataConnection {
     /// The refusal a server with `require_ssl_reuse` answers a data
     /// connection it will not accept with.
     private static let sessionReuseRefused = 522
+    /// `425`: the server could not open the data connection, or (as ProFTPD
+    /// and `LoopbackFTPServer` both say it) the TLS handshake on it failed.
+    private static let dataConnectionFailed = 425
     /// How many times a transfer refused for session reuse is attempted. Two:
     /// one try and one retry. A `522` reaching the user is a diagnosis nobody
     /// can act on, and a loop is worse than either.
@@ -274,7 +277,26 @@ enum FTPDataConnection {
                 // second one — so the channel is still this function's to
                 // close.
                 let refusedTheSession = replies.opening.code == Self.sessionReuseRefused
-                await channel.resolveResumptionWithoutWaiting()
+                // `425` and `522` are what a server answers about a data
+                // connection it HAS touched, and it closes the connection
+                // after either, so the handshake settles promptly and the
+                // wait is bounded by the open timeout. Any other refusal
+                // (`550` and its kind) is about the command, the server never
+                // touched the connection, and its handshake says nothing: it
+                // is not waited for and not read.
+                //
+                // **This is where Ruling T5.1's verdict arrives when the
+                // server refuses instead of answering `150`**, because the
+                // handshake no longer settles before the command is sent. A
+                // data connection that presented another certificate is
+                // reported as that, ahead of the refusal the server wrote
+                // about the connection it then closed: the security-specific
+                // reading is the one the caller acts on.
+                let touched = refusedTheSession || replies.opening.code == Self.dataConnectionFailed
+                if touched, let failure = await channel.settleHandshakeAfterRefusal() {
+                    await channel.close()
+                    throw failure
+                }
                 let resumed = channel.didResumeTLSSession
                 await channel.close(returningSession: !(refusedTheSession && resumed))
                 if refusedTheSession, attempt < Self.attemptsOnSessionRefusal {

@@ -223,6 +223,13 @@ actor LoopbackFTPServer {
     /// before sending its transfer command passed here and hung against a real
     /// server.
     private let dataTLSStartsAfterCommand: Bool
+    /// Whether protected DATA connections present a certificate other than
+    /// the control connection's: a second key pair, in a second TLS context.
+    /// It is what `PASV` pointing at another host looks like, which is the
+    /// case Ruling T5.1 exists for. A different context also cannot resume the
+    /// control connection's tickets, so every data handshake here is a FULL
+    /// one, which is the only kind the certificate comparison runs on.
+    private let dataConnectionsPresentAnotherCertificate: Bool
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let passiveDepth: Int
@@ -247,6 +254,7 @@ actor LoopbackFTPServer {
     private var listener: Channel?
     private var acceptLoop: Task<Void, Never>?
     private var context: NIOSSLContext?
+    private var dataContext: NIOSSLContext?
     private var leafCertificateDERStorage: Data?
 
     /// - Parameter requiresTLSSessionReuse: the `require_ssl_reuse` seam. When
@@ -345,9 +353,11 @@ actor LoopbackFTPServer {
         passiveDepth: Int = 1,
         offersSiteCommands: Bool = true,
         advertisesSiteChmodInFEAT: Bool = false,
-        dataTLSStartsAfterCommand: Bool = false
+        dataTLSStartsAfterCommand: Bool = false,
+        dataConnectionsPresentAnotherCertificate: Bool = false
     ) {
         self.security = security
+        self.dataConnectionsPresentAnotherCertificate = dataConnectionsPresentAnotherCertificate
         self.dataTLSStartsAfterCommand = dataTLSStartsAfterCommand
         self.advertisesMLSD = advertisesMLSD
         self.offersSiteCommands = offersSiteCommands
@@ -378,6 +388,9 @@ actor LoopbackFTPServer {
                 let minted = try await Self.mintContext(maximumTLSVersion: maximumTLSVersion)
                 context = minted.context
                 leafCertificateDERStorage = minted.certificateDER
+                dataContext =
+                    dataConnectionsPresentAnotherCertificate
+                    ? try await Self.mintContext(maximumTLSVersion: maximumTLSVersion).context : nil
             } catch {
                 lifecycle = .idle
                 throw error
@@ -393,6 +406,7 @@ actor LoopbackFTPServer {
             passiveDepth: passiveDepth, dataTLSStartsAfterCommand: dataTLSStartsAfterCommand)
         let state = self.state
         let context = self.context
+        let dataContext = self.dataContext
         let (accepted, acceptedContinuation) = AsyncStream.makeStream(
             of: NIOAsyncChannel<ByteBuffer, ByteBuffer>.self)
 
@@ -453,7 +467,7 @@ actor LoopbackFTPServer {
         self.acceptLoop = Task {
             await Self.serve(
                 accepted: accepted, configuration: configuration, state: state,
-                context: context, group: group)
+                context: context, dataContext: dataContext, group: group)
         }
 
         guard let port = bound.localAddress?.port else {
@@ -874,6 +888,7 @@ actor LoopbackFTPServer {
         configuration: Configuration,
         state: LoopbackFTPState,
         context: NIOSSLContext?,
+        dataContext: NIOSSLContext?,
         group: MultiThreadedEventLoopGroup
     ) async {
         await withDiscardingTaskGroup { tasks in
@@ -881,7 +896,7 @@ actor LoopbackFTPServer {
                 tasks.addTask {
                     let session = LoopbackFTPSession(
                         configuration: configuration, state: state, context: context,
-                        group: group, control: control.channel)
+                        dataContext: dataContext, group: group, control: control.channel)
                     do {
                         try await control.executeThenClose { inbound, _ in
                             try await session.run(inbound: inbound)
@@ -1279,6 +1294,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
     private let configuration: LoopbackFTPServer.Configuration
     private let state: LoopbackFTPState
     private let context: NIOSSLContext?
+    private let dataContext: NIOSSLContext?
     private let group: MultiThreadedEventLoopGroup
     private let control: Channel
 
@@ -1304,11 +1320,13 @@ final class LoopbackFTPSession: @unchecked Sendable {
 
     init(
         configuration: LoopbackFTPServer.Configuration, state: LoopbackFTPState,
-        context: NIOSSLContext?, group: MultiThreadedEventLoopGroup, control: Channel
+        context: NIOSSLContext?, dataContext: NIOSSLContext?,
+        group: MultiThreadedEventLoopGroup, control: Channel
     ) {
         self.configuration = configuration
         self.state = state
         self.context = context
+        self.dataContext = dataContext
         self.group = group
         self.control = control
     }
@@ -1797,7 +1815,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
 
     private func openPassiveListener() async throws -> LoopbackFTPPassiveListener {
         let (connections, continuation) = AsyncStream.makeStream(of: LoopbackFTPDataConnection.self)
-        let context = dataProtected ? self.context : nil
+        let context = dataProtected ? (dataContext ?? self.context) : nil
         let state = self.state
         let holdsHandshake = configuration.dataTLSStartsAfterCommand
         let channel = try await awaitCancellably(

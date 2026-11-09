@@ -744,6 +744,54 @@ struct FTPDataConnectionTests {
         #expect(dataHandshakes.allSatisfy { $0.resumed })
     }
 
+    // MARK: - A data connection presenting another certificate
+
+    /// Ruling T5.1 through the PRODUCTION path: a transfer whose data
+    /// connection presents a certificate other than its control connection's
+    /// fails as `dataCertificateDiffers`, and not as whatever the server said
+    /// about the connection it then closed.
+    ///
+    /// `aDataConnectionPresentingAnotherCertificateIsRefused` (in
+    /// `FTPControlConnectionTests`) calls the static `openDataConnection`,
+    /// which awaits its handshake; `transfer` opens without awaiting it (a
+    /// daemon that handshakes only after the command is the reason), so the
+    /// verdict can arrive AFTER the command, and this server answers `425`
+    /// for the failed handshake instead of `150`. The `425` is a non-preliminary
+    /// reply: the body, and with it `completeHandshake()`, never runs. Before
+    /// the fix the failure read `transferRefused(425)` and the
+    /// security-specific reading was lost. Both orderings of the loopback
+    /// server, because the handshake verdict and the `425` race differently in
+    /// each.
+    @Test(arguments: [false, true])
+    func aTransferWhoseDataConnectionPresentsAnotherCertificateFailsAsSuch(
+        handshakeAfterCommand: Bool
+    ) async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            dataTLSStartsAfterCommand: handshakeAfterCommand,
+            dataConnectionsPresentAnotherCertificate: true)
+        await server.seedFile(Self.seededName, contents: Self.seeded)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS, decider: Self.accepting)
+            let sink = FTPByteSink()
+            let refused = await Self.outcome {
+                try await FTPDataConnection.transfer(
+                    "RETR", argument: Self.seededName, on: connection
+                ) { channel in
+                    sink.append(try await channel.readToEnd())
+                }
+            }
+            // The control connection is still in step after the refusal.
+            let afterwards = try await connection.send("NOOP", argument: nil)
+            await connection.close()
+            return (refused: refused, bytes: sink.count, afterwards: afterwards.code)
+        }
+        #expect(outcome.refused == .failed(.dataCertificateDiffers))
+        #expect(outcome.bytes == 0)
+        #expect(outcome.afterwards == 200)
+    }
+
     // MARK: - A refused session resumption
 
     /// A `522` is retried once rather than handed to the caller.
