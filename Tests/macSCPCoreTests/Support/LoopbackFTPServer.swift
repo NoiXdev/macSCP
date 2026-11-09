@@ -1605,8 +1605,13 @@ final class LoopbackFTPSession: @unchecked Sendable {
         // other case here measures the SITE HELP path).
         if configuration.advertisesSiteChmodInFEAT { lines.append("SITE CHMOD UMASK") }
         if configuration.advertisesMLSD {
+            // RFC 3659 section 7.8: the feature is NAMED `MLST` and its line
+            // carries the fact list. There is no `MLSD` line in a real FEAT
+            // reply -- ProFTPD, measured against the rig on 2026-11-09, writes
+            // only the `MLST` one -- and this server used to write one anyway,
+            // so a client that asked FEAT for `MLSD` passed every case here
+            // and found no MLSD on a real daemon.
             lines.append("MLST type*;size*;modify*;")
-            lines.append("MLSD")
         }
         switch configuration.security {
         case .plain: break

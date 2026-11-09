@@ -90,7 +90,14 @@ struct LoopbackFTPServerTests {
             // Positive beside the negative: the list is the server's real one,
             // so an absent AUTH means something.
             #expect(features.contains("UTF8"))
-            #expect(features.contains("MLSD"))
+            // The RFC 3659 spelling, `MLST`: the loopback server no longer
+            // writes a line named `MLSD`, because no real server does (the
+            // rig's ProFTPD, measured 2026-11-09). Withdrawn wording,
+            // verbatim: `#expect(features.contains("MLSD"))`. The client
+            // derives `MLSD` from `MLST`; `FTPControlConnectionTests` holds
+            // that.
+            #expect(features.contains("MLST type*;size*;modify*;"))
+            #expect(!features.contains("MLSD"))
             #expect(!features.contains("AUTH TLS"))
             await client.close()
         }

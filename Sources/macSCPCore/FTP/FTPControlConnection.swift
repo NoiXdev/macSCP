@@ -1049,7 +1049,8 @@ actor FTPControlConnection {
     ///
     /// Keyed twice on purpose: by the whole line and by its first word, so
     /// both questions a caller asks are answerable — `features.contains("MLSD")`
-    /// and `features.contains("AUTH TLS")`. Uppercased, because RFC 2389
+    /// and `features.contains("AUTH TLS")` — and `MLSD` is also derived from
+    /// `MLST` (below). Uppercased, because RFC 2389
     /// section 3 makes feature names case-insensitive. The first and last
     /// lines of the reply are the human text around the list ("Features:",
     /// "End") and are not features.
@@ -1061,6 +1062,14 @@ actor FTPControlConnection {
             found.insert(text)
             if let verb = text.split(separator: " ").first { found.insert(String(verb)) }
         }
+        // RFC 3659 section 7.8 names the feature `MLST` and says nothing of
+        // `MLSD` in `FEAT`: a server that lists `MLST` supports `MLSD` too, and
+        // writes no line of that name. ProFTPD, measured against the rig on
+        // 2026-11-09, lists `MLST modify*;perm*;size*;type*;…` and no `MLSD`.
+        // So the question every caller asks (`features.contains("MLSD")`) is
+        // answered here, once, instead of by each caller knowing the spelling.
+        // A server that does write an `MLSD` line keeps it.
+        if found.contains("MLST") { found.insert("MLSD") }
         return found
     }
 
