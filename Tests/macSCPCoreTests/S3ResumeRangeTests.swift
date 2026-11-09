@@ -21,7 +21,7 @@ import Testing
 /// The case reads what it asserts before anything heals: the retried item's
 /// end is awaited through the queue's own `auditSink`, which the queue calls
 /// once per item that turns terminal, and then the file on disk is read.
-@Suite("A resumed S3 download refuses an ignored Range", .timeLimit(.minutes(2)))
+@Suite("A resumed S3 download refuses an ignored Range", .timeLimit(.minutes(5)))
 @MainActor
 struct S3ResumeRangeTests {
     @Test(arguments: RangeIgnoringS3Endpoint.Answer.allCases)

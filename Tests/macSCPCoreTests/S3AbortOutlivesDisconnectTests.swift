@@ -25,7 +25,7 @@ import Testing
 /// released only after them, and a plain `await` on it would hold the run
 /// until the abort bound. The time limit ends the wait instead, the case
 /// reads what it asserts, and only then releases the abort.
-@Suite("An S3 multipart abort outlives the disconnect", .timeLimit(.minutes(2)))
+@Suite("An S3 multipart abort outlives the disconnect", .timeLimit(.minutes(5)))
 struct S3AbortOutlivesDisconnectTests {
     @Test func anAbortAfterAFailedPartIsStillSentAfterTheDisconnectThatFollows() async throws {
         let endpoint = S3AbortEndpoint(abortStatus: 204)

@@ -107,7 +107,7 @@ struct FTPFailureSurfacesTests {
                     host: endpoint.host, port: endpoint.port,
                     username: "user-\(UUID().uuidString.prefix(8))", security: .plain,
                     password: "wrong-\(UUID().uuidString)"),
-                transferSlots: 1, certificateDecider: .refusing, timeout: .seconds(30),
+                transferSlots: 1, certificateDecider: .refusing, timeout: LoopbackFTPDeadline.dial,
                 trustStore: nil)
             await fs.disconnect()
             outcome = .success(())

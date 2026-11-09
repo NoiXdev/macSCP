@@ -19,7 +19,7 @@ import Testing
 /// text of what it checks, so a secret spelled inside one would leak through
 /// its own failure message (CLAUDE.md, "A value a test must not leak has two
 /// exits").
-@Suite("A failed transfer shows no raw error", .timeLimit(.minutes(2)))
+@Suite("A failed transfer shows no raw error", .timeLimit(.minutes(5)))
 struct TransferErrorSecrecyTests {
     // MARK: - The values that must not leak
 

@@ -72,8 +72,9 @@ struct FTPFileSystemTests {
                 password: password ?? credentials.password),
             transferSlots: slots,
             certificateDecider: .refusing,
-            timeout: .seconds(30),
-            trustStore: trustStore)
+            timeout: LoopbackFTPDeadline.dial,
+            trustStore: trustStore,
+            tuning: LoopbackFTPDeadline.tuning())
     }
 
     private static func verbs(_ server: LoopbackFTPServer) async -> [String] {

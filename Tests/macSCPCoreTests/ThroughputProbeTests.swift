@@ -19,7 +19,7 @@ import Testing
 /// on an `AsyncSignal` nobody raises, which returns on cancellation — and
 /// never finish after a fixed sleep. The suite's time limit is a hang bound
 /// and nothing else.
-@Suite("The throughput test", .timeLimit(.minutes(2)))
+@Suite("The throughput test", .timeLimit(.minutes(5)))
 struct ThroughputProbeTests {
     /// Four chunks and a half — enough for a cancel to land mid-transfer
     /// and for the last chunk to be a short one.

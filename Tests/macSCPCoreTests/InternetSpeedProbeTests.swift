@@ -20,7 +20,7 @@ import Testing
 /// not a wall-clock ceiling: the clock is a stub (`TickingClock`), so
 /// `bytes / elapsed` is arithmetic over two numbers this file chose. Nothing
 /// below measures how long the machine took.
-@Suite("The internet speed test", .timeLimit(.minutes(2)))
+@Suite("The internet speed test", .timeLimit(.minutes(5)))
 struct InternetSpeedProbeTests {
     static func timer() -> DiagnosticStepTimer {
         DiagnosticStepTimer(
@@ -45,7 +45,7 @@ struct InternetSpeedProbeTests {
     /// runs against an in-process hog suite, and in 1 of 1 under
     /// `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1` over the whole suite.
     ///
-    /// Ten minutes is past this suite's own `.timeLimit(.minutes(2))`, so
+    /// Ten minutes is past this suite's own `.timeLimit(.minutes(5))`, so
     /// a leg that never answers ends the case as the HANG it is, rather
     /// than as a quietly missing request somewhere downstream. Nothing here
     /// asserts elapsed time; this is an input, not a ceiling.

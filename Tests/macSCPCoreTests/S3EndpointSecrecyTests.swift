@@ -20,7 +20,7 @@ import Testing
 /// Every value that must not leak is a named constant, and every expectation
 /// reads a `Bool` computed before it (CLAUDE.md, "A value a test must not
 /// leak has two exits").
-@Suite("No S3 error text carries the typed endpoint", .timeLimit(.minutes(2)))
+@Suite("No S3 error text carries the typed endpoint", .timeLimit(.minutes(5)))
 struct S3EndpointSecrecyTests {
     // MARK: - The values that must not leak
 

@@ -9,7 +9,7 @@ import Testing
 // write-back waits below go through `returnedOrCancelled`, so a waiter that
 // never resumes ends the case at the limit instead of holding the process
 // until CI's step timeout (final review of the 2026-09-19 small follow-ups).
-@Suite("EditSessionManager", .timeLimit(.minutes(2)))
+@Suite("EditSessionManager", .timeLimit(.minutes(5)))
 @MainActor
 struct EditSessionManagerTests {
 

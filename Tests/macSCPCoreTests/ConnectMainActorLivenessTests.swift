@@ -95,8 +95,16 @@ import Testing
 /// intrinsic cost. Three minutes is an emergency exit for a hang, which is
 /// all a `.timeLimit` is for here, and not a budget any case is expected to
 /// approach.
+///
+/// It read `.timeLimit(.minutes(3))` until 2026-11-09. Three minutes had
+/// fallen below the whole suite's own wall clock: CI run 42606504360 took
+/// 212.296 s, and this suite alone, serialized, reported
+/// `passed after 212.088 seconds` in it. It is the project's five now, for the
+/// reason CLAUDE.md gives in "A wall-clock ceiling in a test measures the
+/// runner" (the 2026-11-09 update); the argument above for MORE than one
+/// minute stands, the figure it chose did not.
 @Suite("Connect against an unresponsive host: main-actor liveness", .serialized,
-       .timeLimit(.minutes(3)))
+       .timeLimit(.minutes(5)))
 struct ConnectMainActorLivenessTests {
 
     // MARK: - The instrument

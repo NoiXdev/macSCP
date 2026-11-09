@@ -61,7 +61,7 @@ struct FTPDataConnectionTests {
         _ server: LoopbackFTPServer, host: String, port: Int,
         security: FTPSecurityMode = .plain,
         decider: CertificateDecider = .refusing,
-        timeout: Duration = .seconds(30)
+        timeout: Duration = LoopbackFTPDeadline.dial
     ) async throws -> FTPControlConnection {
         let credentials = server.credentials
         return try await FTPControlConnection.connect(
@@ -71,7 +71,8 @@ struct FTPDataConnectionTests {
             password: credentials.password,
             certificateDecider: decider,
             timeout: timeout,
-            trustStore: nil)
+            trustStore: nil,
+            tuning: LoopbackFTPDeadline.tuning())
     }
 
     /// The scripted replies a dial reads before any of these tests gets a
@@ -91,8 +92,9 @@ struct FTPDataConnectionTests {
                 host: host, port: port, username: "scripted", security: .plain, password: ""),
             password: "unused-by-a-script",
             certificateDecider: .refusing,
-            timeout: .seconds(30),
-            trustStore: nil)
+            timeout: LoopbackFTPDeadline.dial,
+            trustStore: nil,
+            tuning: LoopbackFTPDeadline.tuning())
     }
 
     /// How a transfer ended, as a value that carries no server text: a
@@ -843,7 +845,7 @@ struct FTPDataConnectionTests {
         let outcome = try await Self.running(server) { host, port in
             let connection = try await Self.connect(
                 server, host: host, port: port, security: .explicitTLS, decider: Self.accepting,
-                timeout: refusal == .leavingOpen ? .seconds(3600) : .seconds(30))
+                timeout: refusal == .leavingOpen ? .seconds(3600) : LoopbackFTPDeadline.dial)
             let refused = await Self.outcome {
                 try await FTPDataConnection.transfer(
                     "RETR", argument: Self.seededName, on: connection

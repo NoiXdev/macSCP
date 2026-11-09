@@ -170,6 +170,20 @@ actor LoopbackFTPClient {
     /// this is a constraint on where the client may be used, not an argument for
     /// touching them.
     ///
+    /// **2026-11-09: they were touched, and both counts above have expired.**
+    /// The 19 ungated two-minute bounds were raised to five once the whole
+    /// suite's own wall clock passed 120 s (CLAUDE.md, "A wall-clock ceiling in
+    /// a test measures the runner", the 2026-11-09 update). Re-run the same
+    /// day: the first command above prints 0, the second still prints 2 (both
+    /// gated, left at two minutes), and the five-minute one prints 133. So the
+    /// suites below this bound are those two gated ones only. The bound's
+    /// other premise expired with it: the whole saturated suite took
+    /// 212.296 s on CI run 42606504360, not the 131 s written above, so 180 s
+    /// no longer sits above it. It was NOT raised here, because the window it
+    /// is designed for -- above the suite's wall clock, below its five-minute
+    /// `.timeLimit` -- is now 212.296 s to 300 s, and the right figure inside
+    /// it is a decision this change does not make.
+    ///
     /// The client is called today only from `LoopbackFTPServerTests`, which is
     /// bounded at five minutes: `/usr/bin/grep -rl 'LoopbackFTPClient\.connect(' Tests`
     /// prints that one file (the client's own file is not listed, because it

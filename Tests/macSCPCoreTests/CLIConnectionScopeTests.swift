@@ -13,7 +13,7 @@ import Testing
 ///
 /// The connection holds its pending aborts until the case releases them, so
 /// the ordering is fixed without a clock; the time limit is a hang bound.
-@Suite("The command line's connection scope", .timeLimit(.minutes(2)))
+@Suite("The command line's connection scope", .timeLimit(.minutes(5)))
 struct CLIConnectionScopeTests {
     @Test(arguments: [true, false])
     func theScopeWaitsForPendingAbortsBeforeItDisconnectsAndNamesTheUnconfirmed(

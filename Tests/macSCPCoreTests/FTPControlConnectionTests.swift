@@ -211,7 +211,7 @@ struct FTPControlConnectionTests {
     /// Dials and closes again, reporting only how it ended.
     private static func dial(
         _ server: LoopbackFTPServer, host: String, port: Int, security: FTPSecurityMode,
-        decider: CertificateDecider = .refusing, timeout: Duration = .seconds(30),
+        decider: CertificateDecider = .refusing, timeout: Duration = LoopbackFTPDeadline.dial,
         trustStore: TrustedCertificateStore? = nil, password: String? = nil,
         username: String? = nil
     ) async -> DialOutcome {
@@ -247,8 +247,8 @@ struct FTPControlConnectionTests {
     /// the tests that need the connection itself rather than the outcome.
     private static func connect(
         _ server: LoopbackFTPServer, host: String, port: Int, security: FTPSecurityMode,
-        decider: CertificateDecider = .refusing, timeout: Duration = .seconds(30),
-        tuning: FTPControlConnection.Tuning = .default
+        decider: CertificateDecider = .refusing, timeout: Duration = LoopbackFTPDeadline.dial,
+        tuning: FTPControlConnection.Tuning = LoopbackFTPDeadline.tuning()
     ) async throws -> FTPControlConnection {
         let credentials = server.credentials
         return try await FTPControlConnection.connect(
@@ -304,8 +304,8 @@ struct FTPControlConnectionTests {
     /// Dials a scripted server in plain mode and reports how it ended.
     private static func dialScript(
         _ server: ScriptedFTPServer, host: String, port: Int,
-        security: FTPSecurityMode = .plain, timeout: Duration = .seconds(30),
-        tuning: FTPControlConnection.Tuning = .default
+        security: FTPSecurityMode = .plain, timeout: Duration = LoopbackFTPDeadline.dial,
+        tuning: FTPControlConnection.Tuning = LoopbackFTPDeadline.tuning()
     ) async -> (outcome: DialOutcome, features: Set<String>) {
         do {
             let connection = try await FTPControlConnection.connect(
@@ -400,7 +400,7 @@ struct FTPControlConnectionTests {
             replies: [["334 Adat must follow."]])
         let result = try await Self.runningScript(server) { host, port in
             await Self.dialScript(
-                server, host: host, port: port, security: .explicitTLS, timeout: .seconds(2))
+                server, host: host, port: port, security: .explicitTLS)
         }
         #expect(result.outcome == .failed(.tlsUpgradeRefused(code: 334)))
         #expect(await server.receivedCommands == ["AUTH TLS"])
@@ -499,7 +499,7 @@ struct FTPControlConnectionTests {
                 FTPConnectionConfig(
                     host: host, port: port, username: "scripted", security: .plain, password: ""),
                 password: "unused-by-a-script", certificateDecider: .refusing,
-                timeout: .seconds(30), trustStore: nil,
+                timeout: LoopbackFTPDeadline.dial, trustStore: nil,
                 tuning: FTPControlConnection.Tuning(
                     keepaliveInterval: .milliseconds(20), replyIdleTimeout: .milliseconds(200)))
             var failure: FTPConnectionFailure?
@@ -907,7 +907,7 @@ struct FTPControlConnectionTests {
         let outcome = try await Self.running(server) { host, port in
             let connection = try await Self.connect(
                 server, host: host, port: port, security: .plain, timeout: .seconds(600),
-                tuning: FTPControlConnection.Tuning(dataIdleTimeout: idleBound))
+                tuning: LoopbackFTPDeadline.tuning(dataIdleTimeout: idleBound))
             let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
             // No transfer command, so the server never writes to this
             // connection and never closes it: the read has nothing to wait
@@ -1360,7 +1360,8 @@ struct FTPControlConnectionTests {
             do {
                 let stolen = try await FTPControlConnection.openDataConnection(
                     host: passive.host, port: passive.port, protection: offered,
-                    owner: other.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+                    owner: other.identity, timeout: LoopbackFTPDeadline.dial,
+                    idleTimeout: LoopbackFTPDeadline.dial)
                 await stolen.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -1464,7 +1465,8 @@ struct FTPControlConnectionTests {
             do {
                 let stolen = try await FTPControlConnection.openDataConnection(
                     host: passive.host, port: passive.port, protection: protection,
-                    owner: other.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+                    owner: other.identity, timeout: LoopbackFTPDeadline.dial,
+                    idleTimeout: LoopbackFTPDeadline.dial)
                 await stolen.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -1474,7 +1476,8 @@ struct FTPControlConnectionTests {
             // the same protection on the same listener and is served.
             let data = try await FTPControlConnection.openDataConnection(
                 host: passive.host, port: passive.port, protection: protection,
-                owner: mine.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+                owner: mine.identity, timeout: LoopbackFTPDeadline.dial,
+                idleTimeout: LoopbackFTPDeadline.dial)
             let transfer = try await mine.transferCommand("LIST") {
                 _ = try await data.readToEnd()
             }
@@ -1519,7 +1522,8 @@ struct FTPControlConnectionTests {
                         serverHostname: real.serverHostname,
                         controlCertificateDER: Array("not this server's certificate".utf8),
                         session: nil, vault: nil),
-                    owner: connection.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+                    owner: connection.identity, timeout: LoopbackFTPDeadline.dial,
+                    idleTimeout: LoopbackFTPDeadline.dial)
                 await refused.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -1534,7 +1538,8 @@ struct FTPControlConnectionTests {
                     owner: connection.identity, context: real.context,
                     serverHostname: real.serverHostname,
                     controlCertificateDER: real.controlCertificateDER, session: nil, vault: nil),
-                owner: connection.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+                owner: connection.identity, timeout: LoopbackFTPDeadline.dial,
+                idleTimeout: LoopbackFTPDeadline.dial)
             let transfer = try await connection.transferCommand("LIST") {
                 _ = try await data.readToEnd()
             }
@@ -1766,7 +1771,7 @@ struct FTPControlConnectionTests {
         try await Self.running(server) { host, port in
             let connection = try await Self.connect(
                 server, host: host, port: port, security: .plain,
-                tuning: FTPControlConnection.Tuning(keepaliveInterval: .milliseconds(20)))
+                tuning: LoopbackFTPDeadline.tuning(keepaliveInterval: .milliseconds(20)))
             // Waited on state, not on a clock: `pollUntil` has no deadline of
             // its own and this suite's `.timeLimit` is the only escape.
             try await pollUntil("the idle connection to send NOOP") {

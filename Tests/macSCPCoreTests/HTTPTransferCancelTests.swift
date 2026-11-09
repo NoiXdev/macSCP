@@ -19,7 +19,7 @@ import Testing
 /// a wait on a signal nobody raises, which returns on cancellation — and
 /// only then throws, so no request ends on its own while the case is
 /// deciding. The lost connection fails at once; nothing races it.
-@Suite("An HTTP transfer's cancel in the transfer queue", .timeLimit(.minutes(2)))
+@Suite("An HTTP transfer's cancel in the transfer queue", .timeLimit(.minutes(5)))
 struct HTTPTransferCancelTests {
     // MARK: - Cancel reads cancelled
 

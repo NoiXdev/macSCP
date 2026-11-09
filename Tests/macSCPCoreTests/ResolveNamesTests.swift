@@ -27,7 +27,7 @@ import Testing
 /// lookup that never answers until the case releases it, or to a host
 /// lookup that sleeps the whole of it, so the cut is decided by the lookup
 /// and not by how fast the runner is.
-@Suite("The resolve step's names", .timeLimit(.minutes(2)))
+@Suite("The resolve step's names", .timeLimit(.minutes(5)))
 struct ResolveNamesTests {
     private static let roomy: Duration = .seconds(600)
     private static let tight: Duration = .milliseconds(200)

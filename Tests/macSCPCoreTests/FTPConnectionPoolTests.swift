@@ -44,7 +44,9 @@ struct FTPConnectionPoolTests {
     /// the second would read the first's shrink.
     /// `security`, `trustStore` and `tuning` default to what every case here
     /// needed before the concurrent-close case: plain FTP, no store, and the
-    /// shipped tuning. That case needs TLS (only a TLS close waits for the
+    /// shipped tuning -- with both idle bounds raised to
+    /// `LoopbackFTPDeadline.dial` since 2026-11-09, as the dial's own timeout
+    /// was (`LoopbackFTPDeadline` says why). That case needs TLS (only a TLS close waits for the
     /// peer), a store holding the server's own certificate (so a `.refusing`
     /// decider is never consulted) and the keepalive off (a `NOOP` into a deaf
     /// server would end the connection on its reply bound while the case is
@@ -54,7 +56,7 @@ struct FTPConnectionPoolTests {
         account: String? = nil,
         security: FTPSecurityMode = .plain,
         trustStore: TrustedCertificateStore? = nil,
-        tuning: FTPControlConnection.Tuning = .default
+        tuning: FTPControlConnection.Tuning = LoopbackFTPDeadline.tuning()
     ) -> FTPConnectionPool {
         let credentials = server.credentials
         return FTPConnectionPool(
@@ -64,7 +66,7 @@ struct FTPConnectionPoolTests {
             password: credentials.password,
             transferSlots: slots,
             certificateDecider: .refusing,
-            timeout: .seconds(30),
+            timeout: LoopbackFTPDeadline.dial,
             trustStore: trustStore,
             tuning: tuning)
     }
@@ -721,7 +723,7 @@ struct FTPConnectionPoolTests {
             let pool = Self.pool(
                 server, host: host, port: port, slots: 2,
                 security: .implicitTLS, trustStore: store,
-                tuning: FTPControlConnection.Tuning(keepaliveInterval: .seconds(0)))
+                tuning: LoopbackFTPDeadline.tuning(keepaliveInterval: .seconds(0)))
             _ = try await pool.command()
             var leases: [FTPTransferLease] = []
             for _ in 0..<2 { leases.append(try await pool.acquireTransfer()) }

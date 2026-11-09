@@ -312,7 +312,7 @@ struct S3UploaderTests {
     /// run until the bound. It used to be caught by an "abandoned" flag
     /// instead, which the 30 s production bound could raise only after
     /// 30 s — a wall-clock ceiling (final review M8 of the 2026-09-19 plan).
-    @Test(.timeLimit(.minutes(2))) func theUploadThrowsBeforeItsAbortIsAnswered() async throws {
+    @Test(.timeLimit(.minutes(5))) func theUploadThrowsBeforeItsAbortIsAnswered() async throws {
         let contents = stream(of: Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160))
         let builder = SilentAbortBuilder(uploadID: "UP6")
         let uploader = S3Uploader(noteUnconfirmedAbort: { _ in }, abortBound: Self.roomyAbortBound)

@@ -327,7 +327,8 @@ struct FTPStoredSessionTests {
 
     private func context(secret: String?) -> DiagnosticContext {
         DiagnosticContext(
-            secrets: secret.map { Source(value: $0) }, sessionID: UUID(), timeout: .seconds(20))
+            secrets: secret.map { Source(value: $0) }, sessionID: UUID(),
+            timeout: LoopbackFTPDeadline.dial)
     }
 
     private func ftpValues(
@@ -574,7 +575,7 @@ struct FTPStoredSessionTests {
                 FTPConnectionConfig(
                     host: host, port: port, username: probeServer.credentials.username,
                     security: .plain, password: probeServer.credentials.password),
-                transferSlots: 1, certificateDecider: .refusing, timeout: .seconds(30),
+                transferSlots: 1, certificateDecider: .refusing, timeout: LoopbackFTPDeadline.dial,
                 trustStore: nil)
             await fs.disconnect()
         }

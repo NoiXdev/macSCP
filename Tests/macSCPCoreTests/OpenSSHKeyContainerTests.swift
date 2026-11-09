@@ -19,7 +19,14 @@ import macSCPCore
 /// reads it back with `ssh-keygen -y` — eight keys, sixteen process starts,
 /// counted against `rsaFixture(in:)` on 2026-09-10. The trait bounds a hang,
 /// not a duration — nothing here reads a clock.
-@Suite("OpenSSHKeyContainer", .timeLimit(.minutes(2)))
+///
+/// It read `.timeLimit(.minutes(2))` until 2026-11-09, when two minutes fell
+/// below the whole suite's own wall clock on the three-core runner and the
+/// bound was raised to the project's five (CLAUDE.md, "A wall-clock ceiling
+/// in a test measures the runner", the 2026-11-09 update). The paragraph
+/// above is why this suite once needed more than the one-minute default of
+/// its day; it is no longer why the figure is what it is.
+@Suite("OpenSSHKeyContainer", .timeLimit(.minutes(5)))
 struct OpenSSHKeyContainerTests {
     /// Decodes a fresh `-m PEM` RSA key and returns its components with the
     /// public key line OpenSSH derives from the same file.

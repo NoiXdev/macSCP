@@ -28,7 +28,7 @@ import macSCPCore
 /// the catalogue files; what it must say is the numbers it was given.
 ///
 /// No test asserts how long anything took.
-@Suite("Comparison diff view", .timeLimit(.minutes(2)))
+@Suite("Comparison diff view", .timeLimit(.minutes(5)))
 @MainActor
 struct ComparisonDiffViewTests {
     private typealias Presentation = ComparisonDiffPresentation

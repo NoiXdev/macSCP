@@ -22,7 +22,7 @@ import Testing
 /// Every value that must not leak is a named constant, and every
 /// expectation reads a `Bool` or an index list computed before it
 /// (CLAUDE.md, "A value a test must not leak has two exits").
-@Suite("No credential typed into an endpoint reaches a rendering", .timeLimit(.minutes(2)))
+@Suite("No credential typed into an endpoint reaches a rendering", .timeLimit(.minutes(5)))
 struct TypedEndpointSecrecyTests {
     // MARK: - The values that must not leak
 

@@ -26,7 +26,7 @@ import Testing
 /// the bound. (It used to be caught by an "abandoned" flag the 30 s
 /// production bound raised only after 30 s: a wall-clock ceiling, final
 /// review M8 of the 2026-09-19 plan.)
-@Suite("S3 multipart cancel in the transfer queue", .timeLimit(.minutes(2)))
+@Suite("S3 multipart cancel in the transfer queue", .timeLimit(.minutes(5)))
 struct S3QueueCancelTests {
     @Test @MainActor func aQueueCancelReturnsBeforeTheAbortIsAnsweredAndTheAbortIsStillSent()
         async throws

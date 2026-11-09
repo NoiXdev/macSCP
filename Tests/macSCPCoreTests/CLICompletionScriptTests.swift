@@ -32,7 +32,7 @@ import Testing
 ///
 /// Bounded by the suite's `.timeLimit` alone — no elapsed-time assertion
 /// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner").
-@Suite("CLI completion script", .timeLimit(.minutes(2)))
+@Suite("CLI completion script", .timeLimit(.minutes(5)))
 struct CLICompletionScriptTests {
     // MARK: - The binary generates a script for every shell in the enum
 

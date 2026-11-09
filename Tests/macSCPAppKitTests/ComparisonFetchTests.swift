@@ -27,7 +27,7 @@ import Testing
 ///
 /// No test here asserts how long anything took; the suite's hang bound is
 /// `.timeLimit`.
-@Suite("Comparison fetch", .timeLimit(.minutes(2)))
+@Suite("Comparison fetch", .timeLimit(.minutes(5)))
 @MainActor
 struct ComparisonFetchTests {
 

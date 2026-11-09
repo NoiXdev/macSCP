@@ -18,7 +18,7 @@ import macSCPCore
 /// 2026-09-10 against this file: six call sites in six of its eight `@Test`
 /// functions, one of them parameterised over five producers — ten cases
 /// that each held a thread until the tool exited.
-@Suite("SSHKeyConverter", .timeLimit(.minutes(2)))
+@Suite("SSHKeyConverter", .timeLimit(.minutes(5)))
 struct SSHKeyConverterTests {
     /// Five characters at least: ssh-keygen refuses a shorter one. Never
     /// written into an `#expect` expression's source text — see
