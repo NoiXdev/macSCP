@@ -42,9 +42,6 @@ struct LoopbackFTPReceivedCommand: Sendable, Equatable {
     static let redactedArgument = "<redacted>"
 }
 
-/// One completed TLS handshake the server took part in, and whether it
-/// resumed an earlier session (read off the wire, see
-/// `TLSResumptionInspector`).
 /// How a server that refuses every protected transfer with an opening `425`
 /// treats the data connection it was just connected to
 /// (`LoopbackFTPServer(refusesProtectedTransfersWith425:)`).
@@ -56,6 +53,9 @@ enum LoopbackDataRefusal: Sendable {
     case leavingOpen
 }
 
+/// One completed TLS handshake the server took part in, and whether it
+/// resumed an earlier session (read off the wire, see
+/// `TLSResumptionInspector`).
 struct LoopbackFTPHandshake: Sendable, Equatable {
     enum Connection: Sendable, Equatable {
         case control
@@ -1728,11 +1728,13 @@ final class LoopbackFTPSession: @unchecked Sendable {
         if configuration.advertisesSiteChmodInFEAT { lines.append("SITE CHMOD UMASK") }
         if configuration.advertisesMLSD {
             // RFC 3659 section 7.8: the feature is NAMED `MLST` and its line
-            // carries the fact list. There is no `MLSD` line in a real FEAT
-            // reply -- ProFTPD, measured against the rig on 2026-11-09, writes
-            // only the `MLST` one -- and this server used to write one anyway,
-            // so a client that asked FEAT for `MLSD` passed every case here
-            // and found no MLSD on a real daemon.
+            // carries the fact list. ProFTPD, measured against the rig on
+            // 2026-11-09, writes no `MLSD` line in its FEAT reply, only the
+            // `MLST` one; no other server was measured. (Withdrawn wording,
+            // verbatim: "There is no `MLSD` line in a real FEAT reply".) This
+            // server used to write one anyway, so a client that asked FEAT
+            // for `MLSD` passed every case here and found no MLSD on a real
+            // daemon.
             lines.append("MLST type*;size*;modify*;")
         }
         switch configuration.security {

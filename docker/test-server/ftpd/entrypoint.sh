@@ -15,8 +15,10 @@ set -eu
 : "${FTPD_MLSD:=on}"
 : "${FTPD_IMPLICIT_PORT:=}"
 
-# Generated per start, exactly like the SSH test keys and the WebDAV
-# certificate: no key material in git.
+# Generated when absent (`/run/ftpd` is the container's own filesystem, so a
+# restart of the same container keeps it and a recreated one makes a new one),
+# exactly like the SSH test keys and the WebDAV certificate: no key material in
+# git.
 if [ ! -f /run/ftpd/cert.pem ]; then
     openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
         -subj "/CN=localhost" \
@@ -26,14 +28,14 @@ if [ ! -f /run/ftpd/cert.pem ]; then
     chmod 600 /run/ftpd/key.pem
 fi
 
-# One virtual user, the rig's usual pair. Rewritten each start so a changed
-# password here is the password in force.
+# Two virtual users sharing one password (below). Rewritten each start so a
+# changed password here is the password in force.
 hash=$(openssl passwd -6 testpass)
 # Two users on the same home and the same password: `testuser` is the one the
 # CLI matrix (CLIMatrixFTP) and the rig's documentation use, and `ftpitest` is
 # FTPFileSystemIntegrationTests'. They are separate so a login journal line
-# `USER testuser: Login successful` can only come from the matrix: the case that
-# counts those lines to show a diagnosis sent no password would otherwise race
+# `PASS testuser 230` can only come from the matrix: the case that counts those
+# lines to show a diagnosis sent no password would otherwise race
 # every login the integration suite makes on the same daemon.
 {
     printf 'testuser:%s:1000:1000::/srv/ftp:/bin/false\n' "$hash"

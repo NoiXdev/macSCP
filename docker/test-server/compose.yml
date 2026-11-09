@@ -366,7 +366,8 @@ services:
   # the daemon's MLSD advertisement is a configuration switch (`FTPD_MLSD`),
   # so a second Dockerfile would carry nothing the environment cannot.
   #
-  # `ftpd` advertises MLSD and offers explicit FTPS on its control port
+  # `ftpd` advertises MLST (which the client reads as MLSD) and offers
+  # explicit FTPS on its control port
   # (AUTH TLS, upgraded after the greeting) plus implicit FTPS on 2990.
   # The control port 2121 is what `CLIMatrix.fixture(for:name:)` dials, plain
   # on purpose (the CLI hands every connect `certificate: .refusing`, so a

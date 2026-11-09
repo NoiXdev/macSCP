@@ -7,7 +7,8 @@ import Testing
 /// (`docker compose -f docker/test-server/compose.yml up -d ftpd ftpd-nomlsd`,
 /// from the main checkout), which bring up one ProFTPD image twice
 /// (`docker/test-server/ftpd/`, README.md "The FTP rig"):
-///   - `ftpd`        port 2121: advertises `MLSD`, offers explicit FTPS
+///   - `ftpd`        port 2121: advertises `MLST`, which the client reads as
+///                   `MLSD`, and offers explicit FTPS
 ///                   (`AUTH TLS`) on the same port; port 2990: implicit FTPS;
 ///   - `ftpd-nomlsd` port 2122: the same daemon with `MLSD` neither advertised
 ///                   nor accepted, so `LIST` runs against a real server.
@@ -414,8 +415,15 @@ struct FTPFileSystemIntegrationTests {
             #expect(hello?.size == 30)
             #expect(hello?.permissions == 0o644)
             #expect(viaMLSD.first { $0.name == "sub" }?.kind == .directory)
-            // The list the file system returned is the MLSD one.
-            #expect(viaList.map(\.name).sorted() == viaMLSD.map(\.name).sorted())
+            // The list the file system returned is the MLSD one: every item
+            // equal to the MLSD parse of the same directory, `modified`
+            // included. Compared in name order, because two reads of a
+            // directory need not come back in the same one. (Withdrawn
+            // wording of the check, verbatim: `viaList.map(\.name).sorted()
+            // == viaMLSD.map(\.name).sorted()`, which `LIST` would also have
+            // satisfied.)
+            let byName: (RemoteFileItem, RemoteFileItem) -> Bool = { $0.name < $1.name }
+            #expect(viaList.sorted(by: byName) == viaMLSD.sorted(by: byName))
 
             // Debt three: the daemon's spelling of a symlink is read as one,
             // by BOTH dialects. `.other` here would be chmodded by

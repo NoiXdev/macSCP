@@ -903,19 +903,34 @@ start, both measured: a `<VirtualHost>` does not inherit the main server's
 `PassivePorts`, so the implicit listener answered `EPSV` with ports 1658 and
 2432 that the compose file does not publish (the dial died with "The
 connection to the FTP server ended"); and ProFTPD's `/dev/stderr` log target
-is refused (it is a symbolic link), so the daemon logs to files that the
-entrypoint follows with `tail -F`, which is what `docker compose logs` shows.
-The trace (`Trace tls:10 command:5 response:5`) is on, because the TLS
-measurements below were read from it.
+is refused (it is a symbolic link), so the daemon logs to files, which the
+entrypoint follows with `tail -F`. What each file carries is stated in this
+section's first paragraphs: `SystemLog` stays empty and the session lines go
+to the container's stderr. (Withdrawn wording, verbatim: "which is what
+`docker compose logs` shows", said of the files the entrypoint follows; the
+first paragraphs say `docker compose logs` shows the stderr lines.) The trace
+(`Trace tls:10 command:5 response:5`) is on, because the TLS measurements
+below were read from it.
 
 **ProFTPD's TLS defaults are the demanding ones, and the rig keeps them.**
 Data connections must resume the control connection's TLS session
 (`NoSessionReuseRequired` is NOT set), and a data connection's handshake
-starts only after the daemon has read the transfer command. Both found real
-defects in the client, which the in-process `LoopbackFTPServer` could not
-(it answered a ClientHello the moment a connection opened, and wrote an
-`MLSD` line in `FEAT` that no real server writes); `git log` for the two
-`fix(core)` commits of FTP plan Task 11 has the figures.
+starts only after the daemon has read the transfer command. The second
+found a real defect in the client, which the in-process `LoopbackFTPServer`
+could not, because it answered a ClientHello the moment a connection opened.
+The first found none: twelve protected transfers on one control connection all
+resumed (the commit `test(rig): twelve protected transfers on one control
+connection keep resuming against ProFTPD`). Separately, the loopback server
+wrote an `MLSD` line in `FEAT` that ProFTPD does not write (no other server was
+measured). Task 11 of the FTP plan has four `fix(core)` commits, named here by
+subject because a hash changes when a branch is rebase-merged: `FEAT's MLST is
+read as MLSD, so a real daemon is listed with MLSD`, `a protected transfer sends
+its command before awaiting the data handshake`, `a refused data connection that
+presented another certificate is reported as such`, and `a refusal that is not
+about the certificate stays the refusal the server wrote`. `git log
+--format=%s` shows them. (Withdrawn wording, verbatim: "Both found real
+defects in the client", "an `MLSD` line in `FEAT` that no real server writes",
+and "the two `fix(core)` commits of FTP plan Task 11".)
 
 ### The pin is a debt with a review date
 

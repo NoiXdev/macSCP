@@ -14,7 +14,8 @@ struct FTPDataEndpoint: Equatable, Sendable {
 /// optional restart marker, the transfer command and both of its replies.
 ///
 /// **This is the only place in the backend that opens a data connection**, and
-/// it opens it through `FTPControlConnection.openDataConnection(host:port:)` —
+/// it opens it through
+/// `FTPControlConnection.openDataConnection(host:port:awaitingHandshake:)` —
 /// the instance method, which derives the owner and the protection from the
 /// connection itself. The static that takes an `owner:` argument, and refuses
 /// a mismatch at run time, has no caller here: a data connection paired with
@@ -38,9 +39,6 @@ enum FTPDataConnection {
     /// The refusal a server with `require_ssl_reuse` answers a data
     /// connection it will not accept with.
     private static let sessionReuseRefused = 522
-    /// `425`: the server could not open the data connection, or (as ProFTPD
-    /// and `LoopbackFTPServer` both say it) the TLS handshake on it failed.
-    private static let dataConnectionFailed = 425
     /// How many times a transfer refused for session reuse is attempted. Two:
     /// one try and one retry. A `522` reaching the user is a diagnosis nobody
     /// can act on, and a loop is worse than either.

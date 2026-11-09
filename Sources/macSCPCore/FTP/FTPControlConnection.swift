@@ -1394,7 +1394,10 @@ actor FTPControlConnection {
     /// still open with `awaitingHandshake: true`, which only `transfer` does
     /// not.
     /// - Parameter timeout: bounds OPENING the connection — the TCP connect
-    ///   and the TLS handshake. It is not a read budget: `idleTimeout` is.
+    ///   and, with `awaitingHandshake: true`, the TLS handshake. With `false`
+    ///   the handshake is bounded later, by the same figure, in
+    ///   `FTPDataChannel.completeHandshake()`. It is not a read budget:
+    ///   `idleTimeout` is.
     /// - Parameter idleTimeout: how long a read of this connection may be
     ///   silent before it gives up, rearmed by every chunk. Passing the dial's
     ///   figure here is what capped every download at the connect timeout
