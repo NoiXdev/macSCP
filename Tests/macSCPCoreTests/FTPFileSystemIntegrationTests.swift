@@ -226,6 +226,34 @@ struct FTPFileSystemIntegrationTests {
         #expect(reachable, "a remembered certificate was refused on the second dial")
     }
 
+    /// Many protected transfers in a row on ONE control connection, against a
+    /// daemon that requires each data connection to resume its session.
+    ///
+    /// `FTPSessionVault`'s own measurement (against `LoopbackFTPServer`, which
+    /// is BoringSSL) is that a control connection holds two tickets and each
+    /// is used once, so a third protected transfer is refused: "a backend that
+    /// stops transferring after the second file". That is a property of the
+    /// server's TLS library as much as of the client, so it is asked of the
+    /// rig's daemon (OpenSSL) here, with a single transfer slot so every
+    /// transfer shares one control connection. Twelve, well past two.
+    @Test func aLongProtectedSessionKeepsItsDataConnectionsResuming() async throws {
+        let directory = Self.trustDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fs = try await Self.connect(
+            port: Daemon.withMLSD.port, security: .explicitTLS, slots: 1,
+            decider: .asking { _ in true },
+            trustStore: TrustedCertificateStore(directory: directory))
+        let path = "/ftp-itest-long-\(UUID().uuidString).bin"
+        let payload = Self.pseudoRandomBytes(count: 20 * 1024)
+        try await Self.withLitter(fs, [path]) {
+            try await Self.write(fs, path: path, content: payload)
+            for round in 1...12 {
+                let downloaded = try await Self.drain(try await fs.readStream(path: path))
+                #expect(downloaded == payload, "transfer \(round) of 12 returned other bytes")
+            }
+        }
+    }
+
     /// Implicit FTPS on the daemon's own port: TLS from the first byte, before
     /// the greeting. The same upload and download as above, because the data
     /// connection is where an implicit-mode server differs.
