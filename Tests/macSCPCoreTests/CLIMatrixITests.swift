@@ -950,11 +950,25 @@ enum CLIMatrixCases {
     /// on the fresh store already and records nothing. That branch is not a
     /// bare `return` for the reason the host-key case states — a gate stuck
     /// at `true` must fail on S3 and WebDAV, not merely skip them.
+    ///
+    /// **Plain FTP is the one backend with no host keys whose dial is not
+    /// `ok`**: it is `skipped` with `DiagnosticReason.plaintextLogin`, exits 0,
+    /// and the case checks the server's own login journal to show nothing was
+    /// sent (Ruling T8.4; `CLIMatrixFTPITests` carries the history). The
+    /// quoted sentence above is therefore true of S3 and WebDAV and not of
+    /// FTP, and the branch is chosen from the fixture's own security mode, not
+    /// from the kind.
     static func diagnoseDialMeasuresTheBackendsOwnConnect(_ kind: ConnectionKind) async throws {
         let rig = try CLIMatrix.make(for: kind, label: "diagnose-dial")
         defer { rig.tearDown() }
         let ok = try #require(CLIMatrix.outcomeKey(for: .ok))
         #expect(try rig.recordedHostKeys().isEmpty, "a fresh store already knows a host key")
+        // Whether the fixture's login would cross the wire unencrypted, read
+        // from the stored session the run dials, not from the kind: FTP over
+        // TLS would not, and is a different case.
+        let sendsItsPasswordInTheClear = rig.session.ftp?.security == .plain
+        let loginsBeforeTheDiagnoses =
+            sendsItsPasswordInTheClear ? try await Self.rigLoginCount() : 0
 
         let fresh = try await diagnoseDial(rig)
         if try rig.hasHostKeys(operation: "the diagnose host-key refusal") {
@@ -985,6 +999,31 @@ enum CLIMatrixCases {
                 "ls --accept-new exited \(accepted.status) on \(kind.rawValue)")
             let remembered = try rig.recordedHostKeys()
             #expect(remembered.count == 1, "--accept-new recorded \(remembered.count) host keys")
+        } else if sendsItsPasswordInTheClear {
+            // Plain FTP: no host key to refuse AND no login to measure, and
+            // the second is the point. A diagnosis has nobody to ask before
+            // putting a password on the wire (`FTPProbe.open`, Ruling T8.4,
+            // restated by T10.3), so the dial row is SKIPPED, with Core's own
+            // sentence, and the exit is 0 because a skipped row is not a
+            // failed one. Task 10 wrote `ok` here for every backend without
+            // host keys and recorded that the FTP row would not be (see
+            // `CLIMatrixFTPITests`); task 11 is the first run against a
+            // server, and corrected the expectation rather than the probe.
+            // Withdrawn wording, verbatim: "A backend with no host keys has
+            // nothing to refuse: its dial is `ok` on the fresh store
+            // already". True of S3 and WebDAV, whose dial needs no consent
+            // to send what it sends.
+            let skipped = try #require(CLIMatrix.outcomeKey(for: .skipped("")))
+            #expect(
+                fresh.dial.outcome == skipped,
+                "the dial came back \(fresh.dial.outcome) on \(kind.rawValue)")
+            #expect(
+                fresh.dial.reason == DiagnosticReason.plaintextLogin,
+                "the skipped dial gave another reason on \(kind.rawValue)")
+            #expect(fresh.status == 0, "the skipped dial exited \(fresh.status) on \(kind.rawValue)")
+            #expect(
+                try rig.recordedHostKeys().isEmpty,
+                "\(kind.rawValue) recorded a host key it has no host keys for")
         } else {
             #expect(
                 fresh.dial.outcome == ok,
@@ -996,10 +1035,66 @@ enum CLIMatrixCases {
         }
 
         let known = try await diagnoseDial(rig)
-        #expect(
-            known.dial.outcome == ok,
-            "the dial came back \(known.dial.outcome) on \(kind.rawValue) with the key known")
+        if sendsItsPasswordInTheClear {
+            let skipped = try #require(CLIMatrix.outcomeKey(for: .skipped("")))
+            #expect(
+                known.dial.outcome == skipped,
+                "the dial came back \(known.dial.outcome) on \(kind.rawValue) a second time")
+            // The password stayed off the wire both times. The server's own
+            // login journal is the witness: output the CLI printed cannot say
+            // what the CLI sent. The positive control comes AFTER the
+            // equality and is what makes it mean anything -- a login this
+            // test makes itself must be counted, or the count is looking at
+            // nothing.
+            let loginsAfterTheDiagnoses = try await Self.rigLoginCount()
+            let loggedIn = loginsAfterTheDiagnoses != loginsBeforeTheDiagnoses
+            #expect(loggedIn == false, "a diagnosis logged in to the plain rig")
+            try await Self.logInOnceToThePlainRig(rig)
+            let afterTheControl = try await Self.rigLoginCount()
+            #expect(
+                afterTheControl == loginsAfterTheDiagnoses + 1,
+                "the rig's login journal did not count a login it was sent")
+        } else {
+            #expect(
+                known.dial.outcome == ok,
+                "the dial came back \(known.dial.outcome) on \(kind.rawValue) with the key known")
+        }
         #expect(known.status == 0, "the dial exited \(known.status) on \(kind.rawValue)")
+    }
+
+    private struct RigJournalUnreadable: Error {
+        let status: Int32
+    }
+
+    /// How many logins the rig's plain FTP daemon has journalled since it
+    /// started: its own `USER ... Login successful.` lines, read with
+    /// `docker logs`. Counted as OCCURRENCES of the login sentence, by
+    /// splitting on it, not as lines: a count of lines is a different figure
+    /// the moment two entries share one.
+    private static func rigLoginCount() async throws -> Int {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["logs", "macscp-test-ftpd"])
+        guard result.status == 0 else {
+            throw RigJournalUnreadable(status: result.status)
+        }
+        let text = result.stdoutText + result.stderrText
+        return text.components(separatedBy: "USER testuser: Login successful").count - 1
+    }
+
+    /// One login of the kind a diagnosis must not make, made on purpose and
+    /// by the test, so `rigLoginCount()` has something it must count.
+    private static func logInOnceToThePlainRig(_ rig: CLIMatrix) async throws {
+        let config = try #require(rig.session.ftp)
+        let fileSystem = try await FTPFileSystem.connect(
+            FTPConnectionConfig(
+                host: config.host, port: config.port, username: config.username,
+                // The tracked fixture's own pair (`CLIMatrix.fixture`), the
+                // one the rig's compose file spells out.
+                security: config.security, password: "testpass"),
+            transferSlots: 1, certificateDecider: .refusing, timeout: .seconds(30),
+            trustStore: nil)
+        await fileSystem.disconnect()
     }
 
     /// One `--scope dial` run, decoded: the two rows it must print, the exit
@@ -2286,25 +2381,36 @@ struct CLIMatrixWebDAVITests {
 /// parent commit still carries it for anyone who wants to see what could not
 /// be checked.)
 ///
-/// **None of these cases has ever run.** They are declared here, gated like
-/// their siblings, and the container they dial is FTP plan Task 11's work in
-/// the main checkout: the rig's compose file mounts its seed relative to
-/// itself, so it is started from `/Users/noidee/macSCP` and never from a
-/// worktree. What Task 10 needed from this suite is its `kind`, which
-/// `everyConnectionKindHasAMatrixSuite` reads in a plain `swift test`.
+/// **These cases first ran on 2026-11-09, against the rig's `ftpd` service**
+/// (`docker/test-server/ftpd/`, FTP plan Task 11, main checkout). Measured
+/// that day: 18 declarations, 20 test cases (`putOverAnExistingFile` is
+/// parameterised over `ConflictAction.allCases`, which has three), and exactly
+/// one of them was red on its first run, for the reason the next paragraph
+/// gives; the other 19 passed without a change to the case or the container.
+/// (Withdrawn wording, verbatim: "**None of these cases has ever run.** They
+/// are declared here, gated like their siblings, and the container they dial
+/// is FTP plan Task 11's work in the main checkout: the rig's compose file
+/// mounts its seed relative to itself, so it is started from
+/// `/Users/noidee/macSCP` and never from a worktree." The second sentence of
+/// it is still true and is the rig README's, not this comment's.)
 ///
-/// **One case below carries a known expectation debt**, named here rather
-/// than left for whoever first starts the container.
-/// `diagnoseDialMeasuresTheBackendsOwnConnect` asserts that a backend with no
-/// host keys comes back `ok` on a fresh store. FTP has no host keys, and the
-/// rig fixture is PLAIN (`CLIMatrix.fixture(for:name:)`, for the reason the
-/// WebDAV vhost is plain: the CLI dials with `certificate: .refusing`) — and
-/// `FTPProbe.open` skips a plain-mode login before it reads the secret,
-/// because a diagnosis has nobody to ask before putting a password on the
-/// wire. So that row will come back `skipped`, not `ok`. Changing the
-/// expectation is Task 11's; sending the credential to make it `ok` is
-/// forbidden (Ruling T8.4), and a greeting-only probe that measures
-/// reachability with no credential is the recorded better answer.
+/// **The one red was the expectation's fault, not the container's, and the
+/// case now says so in its own body.** `diagnoseDialMeasuresTheBackendsOwnConnect`
+/// asserted that a backend with no host keys comes back `ok` on a fresh store.
+/// FTP has no host keys, and the rig fixture is PLAIN
+/// (`CLIMatrix.fixture(for:name:)`, for the reason the WebDAV vhost is plain:
+/// the CLI dials with `certificate: .refusing`) — and `FTPProbe.open` skips a
+/// plain-mode login before it reads the secret, because a diagnosis has nobody
+/// to ask before putting a password on the wire. So that row came back
+/// `skipped`, which is what Task 10 recorded it would. Task 11 corrected the
+/// expectation; it did NOT send the credential to make the row `ok`, which
+/// Ruling T8.4 forbids and Ruling T10.3 restates, and it did NOT build the
+/// recorded better answer (a greeting-only probe that measures reachability
+/// with no credential): that is a design decision about what a diagnosis
+/// reports, not a test fix, and it is left to the maintainer. The case also
+/// no longer takes the output's word for it: it counts the daemon's own login
+/// journal before and after both diagnoses and requires the count not to
+/// move, with a login the test makes itself as the positive control.
 @Suite("CLIMatrixFTP", .enabled(if: rigIsEnabled), .serialized)
 struct CLIMatrixFTPITests {
     static let kind: ConnectionKind = .ftp

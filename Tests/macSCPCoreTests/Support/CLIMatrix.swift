@@ -123,14 +123,20 @@ struct CLIMatrix: Sendable {
                 "testpass",
                 "/")
         case .ftp:
-            // Where the FTP rig WILL be (FTP plan Task 11 builds the
-            // container): control port 2121, implicit TLS on 2990, the same
-            // `testuser`/`testpass` pair as the SSH rig. Plain on purpose,
+            // Where the FTP rig is (`docker/test-server/ftpd/`, built by FTP
+            // plan Task 11): the `ftpd` service, control port 2121 (implicit
+            // TLS is on 2990), the same `testuser`/`testpass` pair as the SSH
+            // rig, chrooted so the session root is `/`. Plain on purpose,
             // for the reason the WebDAV vhost above is: the CLI hands every
             // connect `certificate: .refusing`, so a self-signed TLS endpoint
-            // is unreachable from the binary. The gated cases that dial this
-            // fail until the container exists, which is where that debt
-            // belongs; nothing in the ungated suites opens a socket.
+            // is unreachable from the binary. Nothing in the ungated suites
+            // opens a socket. (Withdrawn wording, verbatim: "Where the FTP rig
+            // WILL be (FTP plan Task 11 builds the container)" and "The gated
+            // cases that dial this fail until the container exists, which is
+            // where that debt belongs". The container exists; every case that
+            // dials it passed on its first run against it except the one
+            // `CLIMatrixFTPITests` names, whose expectation was the thing
+            // that was wrong.)
             return (
                 ftpSession(
                     name: name,
