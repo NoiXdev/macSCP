@@ -196,8 +196,11 @@ log, `reason:` string or test name, and no blocking wait anywhere in a test.
    silent plaintext login.
 6. **TLS through `apple/swift-nio-ssl`, as a new dependency.** §7 carries the
    reasoning and the rejected alternative.
-7. **`MLSD` when `FEAT` advertises it, `LIST` with a dialect parser otherwise**
-   (§8).
+7. **`MLSD` when `FEAT` advertises `MLST`, `LIST` with a dialect parser
+   otherwise** (§8). *(Corrected 2026-11-09, Ruling T12.2 of the plan's
+   closeout; withdrawn wording, verbatim: "`MLSD` when `FEAT` advertises it,
+   `LIST` with a dialect parser otherwise". `FEAT` does not advertise `MLSD`;
+   see §8.)*
 8. **Filename encoding: `OPTS UTF8 ON` where `FEAT` advertises `UTF8`;
    otherwise decode as UTF-8 and fall back per name**, so one undecodable name
    does not poison a listing.
@@ -468,9 +471,26 @@ for a resumed download.
 ## 8. Listing
 
 `MLSD` (RFC 3659) returns a machine-readable listing and is the only sane path.
-It is advertised in `FEAT`, so the probe is free. Where it is absent — which is
-exactly the old shared hosts this backend exists for — `LIST` returns a
-human-readable listing in a dialect, and the dialects are not inventable.
+It is advertised in `FEAT` as `MLST`, so the probe is free. Where it is
+absent — which is exactly the old shared hosts this backend exists for — `LIST`
+returns a human-readable listing in a dialect, and the dialects are not
+inventable.
+
+**Corrected 2026-11-09, Ruling T12.2 of the plan's closeout.** Withdrawn
+wording, verbatim: "It is advertised in `FEAT`, so the probe is free." It said
+`FEAT` advertises `MLSD`, and `FEAT` does not carry that name. RFC 3659 section
+7.8 names the feature `MLST` and says nothing of `MLSD` in `FEAT`: a server
+that lists `MLST` supports `MLSD` too. ProFTPD 1.3.9b, measured against the rig
+on 2026-11-09 by Task 11, answers `FEAT` with a line beginning ` MLST
+modify*;perm*;size*;type*;` and with no line for `MLSD`. The first draft's
+reading made every real server look as if it had no `MLSD`, so every real
+server was listed with `LIST`; `FTPControlConnection.features(of:)` now reads
+`MLST` as `MLSD`, once, so that every caller asks one question. Two
+consequences are stated here because they are behaviour: a server that
+advertises `MLST` is listed through `MLSD`, and there is **no `LIST` fallback
+when `MLSD` is then refused** — the verb is chosen once from `FEAT`, so such a
+server fails the listing and is not read the other way. The old shared hosts
+this section names are the ones that advertise neither.
 
 **Because there is no real-server corpus, the dialects are fixtures, not
 servers.** A `LIST` parser is a pure function; it gets unit tests over the
@@ -516,8 +536,16 @@ the rig is the whole of the evidence.
 Two services, chosen so that the fallback path is exercised rather than merely
 present:
 
-- one that advertises `MLSD` and supports `AUTH TLS`, and
-- one that does **not** advertise `MLSD`, so `LIST` runs in anger.
+- one that advertises `MLST` (and so supports `MLSD`) and supports `AUTH TLS`,
+  and
+- one that does **not** advertise `MLST`, so `LIST` runs in anger.
+
+*(Corrected 2026-11-09, Ruling T12.2 of the plan's closeout; see the correction
+in §8. Withdrawn wording, verbatim: "one that advertises `MLSD` and supports
+`AUTH TLS`, and" and "one that does **not** advertise `MLSD`, so `LIST` runs in
+anger." The two other places in this document that say a service "advertises
+`MLSD`", in §0 and in the next paragraph, quote the first draft's own words
+about an image problem and are left as that record.)*
 
 Both start from the main checkout only (`CLAUDE.md`: never from a worktree —
 the seed mount is relative to the compose file), both seeded idempotently like

@@ -412,13 +412,39 @@ Fields per `Sources/macSCPCore/Capabilities/ProtocolCapabilities.swift`:
 | `resumeMode` | **unknown / no clean enum fit** — SMB reads and writes take an arbitrary byte offset per request (both libraries), which is not exactly `.append`, `.rangeGet` (GET-only) or `.restOffset` (an FTP-specific command name); needs a design decision, possibly a new case | `.restOffset` — from docs (spec text): FTP `REST` | same as plain FTP |
 | `supportsPresignedURL` | `false` — from docs (no such SMB concept) | `false` — from docs | `false` — from docs |
 | `supportsRemoteChecksum` | **unknown** — neither library was searched for a checksum/hash extension this session; SMB has no standard base-protocol checksum command | `false` by default, **conditionally `true`** — from docs (spec text): only if `XSHA256`/`HASH` is measured present on a given server, which is a per-connection fact, not a static protocol fact — same tension as `resumeMode` above, may need to be a runtime-detected capability rather than a static descriptor field | same as plain FTP |
-| `transport` | **unknown / no clean enum fit** — SMB2/3 signing and encryption are negotiated via session keys derived from NTLM/Kerberos, not a TLS handshake with a certificate trust store; none of `.alwaysEncrypted`/`.optionalTLS`/`.plaintext` describes that mechanism accurately, this is a real design gap, not an oversight in this table | `.plaintext` — from docs (spec text): goes through the existing `PlaintextTransportGate` | **not representable as a single value** — from docs (spec text): explicit (`AUTH TLS`, port 21) and implicit (TLS-from-byte-one, port 990) are two different modes of what the descriptor calls one `ConnectionKind`; likely needs a per-connection field rather than a fixed descriptor value, mirroring the `resumeMode`/checksum tension above |
+| `transport` | **unknown / no clean enum fit** — SMB2/3 signing and encryption are negotiated via session keys derived from NTLM/Kerberos, not a TLS handshake with a certificate trust store; none of `.alwaysEncrypted`/`.optionalTLS`/`.plaintext` describes that mechanism accurately, this is a real design gap, not an oversight in this table | `.plaintext` — from docs (spec text): goes through the existing `PlaintextTransportGate` **(corrected 2026-11-09: see the correction under this table)** | **not representable as a single value** — from docs (spec text): explicit (`AUTH TLS`, port 21) and implicit (TLS-from-byte-one, port 990) are two different modes of what the descriptor calls one `ConnectionKind`; likely needs a per-connection field rather than a fixed descriptor value, mirroring the `resumeMode`/checksum tension above **(corrected 2026-11-09: see the correction under this table)** |
 
 Three cells are flagged **unknown / no clean enum fit** rather than guessed:
 SMB's `resumeMode` and `transport`, and FTP's/FTPS's checksum and transport
 being connection-time facts rather than protocol-static ones. All three are
 measurement findings for the eventual design step, not implementation
 decisions made here.
+
+**Corrected 2026-11-09 by the FTP backend plan's closeout (design
+`2026-11-05-ftp-backend-design.md` section 7a, "Three security modes, one fixed
+`transport` value — measured, not assumed").** Two cells of the table above
+were wrong about `transport`, and the paragraph just above repeats the
+second. Withdrawn wording, verbatim, from the FTP (plain) cell: "`.plaintext` —
+from docs (spec text): goes through the existing `PlaintextTransportGate`".
+`PlaintextTransportGate.requiresConfirmation` returns `false` unless the
+capability is `.optionalTLS`:
+`/usr/bin/grep -n -F 'guard capabilities.transport == .optionalTLS' Sources/macSCPCore/Capabilities/PlaintextTransportGate.swift`
+prints 1 line, exit 0. So a descriptor value of `.plaintext` would switch the
+gate off for the backend it was written for. Withdrawn wording, verbatim, from
+the FTPS cell: "likely needs a per-connection field rather than a fixed
+descriptor value, mirroring the `resumeMode`/checksum tension above", and from
+the paragraph under the table: "FTP's/FTPS's checksum and transport being
+connection-time facts rather than protocol-static ones" — for `transport`; the
+checksum half of that clause is not touched. The expectation was measured
+against the code on 2026-11-05 and is false: the gate is the only reader of the
+axis and asks two questions, the capability (does the question apply to this
+kind at all) and the config (is THIS endpoint plaintext). FTP's descriptor
+keeps `transport: .optionalTLS` as one fixed value for all three security
+modes, and the gate's `.ftp` arm answers true for the plain mode only. No
+capability field, no change to the other backends. The FTP cells for
+`permissionModel`, `supportsSymlinks` and `atomicRename` were also decided
+differently afterwards (`.posixMode`, `true`, `false`); spec section 7a's table
+carries those and they are not re-corrected here.
 
 ## 5. Rig options (research only — compose file not touched, no containers started)
 
@@ -528,6 +554,19 @@ untested/undocumented; `garethflowers/docker-ftp-server`: no TLS at all),
 so validating the from-scratch implicit-FTPS path against a real server
 may itself need custom rig work before any implementation plan can rely on
 it.
+
+**Answered 2026-11-09 for FTP, by Task 11 of the FTP backend plan.** The
+sentence above stays as what was known on 2026-09-02, and its prediction came
+true: custom rig work was needed, and it was done. The rig is
+`docker/test-server/ftpd/Dockerfile`, ProFTPD 1.3.9b on `alpine:3.22`, whose own
+repository carries arm64 packages and whose one binary gives plain FTP,
+explicit FTPS and implicit FTPS (two compose services off the one image; the
+second has `MLSD` switched off, for the `LIST` path). Implicit FTPS is
+validated against it by `FTPFileSystemIntegrationTests`, and the first real
+server found three defects in the from-scratch client that the in-process
+loopback server had hidden — the record of them is the FTP backend row in
+`docs/BACKLOG.md`. The two images this paragraph names were not used. The SMB
+half of this section is untouched.
 
 **NIOSSL**: **not present** in macSCP's dependency graph today.
 `Package.resolved` pins `swift-nio` 2.101.2, Citadel, `swift-nio-ssh`, and

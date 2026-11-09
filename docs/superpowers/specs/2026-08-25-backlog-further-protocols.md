@@ -82,6 +82,24 @@ by the maintainer within the hour, with two harder requirements:
    first byte on 990). TLS trust runs through the existing
    `TrustedCertificateStore`/decider the WebDAV backend already uses, so
    the guarantee shape is WebDAV's, not SSH's.
+
+   **Corrected 2026-11-09 by the FTP backend plan's closeout (spec
+   `2026-11-05-ftp-backend-design.md` section 0, divergence 2).** The decision
+   in this requirement stands in full — plain FTP asks, and a warning the user
+   confirms is not a refusal. The MECHANISM it names is wrong. Withdrawn
+   wording, verbatim: "`PlaintextTransportGate` (`TransportSecurity.plaintext`,
+   the same confirmation WebDAV over `http://` gets)". The gate decides in two
+   parts: `guard capabilities.transport == .optionalTLS else { return false }`
+   (`/usr/bin/grep -n -F 'guard capabilities.transport == .optionalTLS'
+   Sources/macSCPCore/Capabilities/PlaintextTransportGate.swift` prints 1 line,
+   exit 0) and then a per-config `isPlaintext`. A backend whose descriptor said
+   `.plaintext` would therefore switch the gate OFF for the one backend the
+   sentence was written for. FTP's descriptor says `transport: .optionalTLS`
+   (the `ftpDescriptor` block of `BackendDescriptor.swift`), and the gate's
+   `.ftp` arm answers true for the plain mode only: explicit and implicit FTPS
+   never ask. The same measurement is why the per-connection field this record
+   expected is not needed; see the correction in
+   `2026-09-02-protocols-library-measurement.md`.
 2. **SMB must run natively, standalone** — no mount, no share added in
    macOS, no Finder involvement. An SMB2/3 client inside macSCP, talking
    to the server itself, so `connect` is a connection and the secret
@@ -137,6 +155,13 @@ arm64).
 - **Rig.** Both researched FTPS images have a real gap (no native arm64
   build, or no TLS); an implicit-FTPS rig may need a custom image. SMB:
   a Samba image exists for arm64 — see the record's §5.
+  **Answered 2026-11-09 for FTP, by Task 11 of the FTP backend plan** (the
+  sentence stays as the record of what was known on 2026-09-02): the rig is a
+  custom image after all, `docker/test-server/ftpd/Dockerfile`, ProFTPD 1.3.9b
+  on `alpine:3.22`, which carries arm64 packages in its own repository and
+  gives plain FTP, explicit FTPS and implicit FTPS from one binary; implicit
+  FTPS is exercised against it by `FTPFileSystemIntegrationTests`. The SMB half
+  of this sentence is untouched.
 
 Next: brainstorming → design for FTP/FTPS first (own code, NIOSSL as the
 one new dependency), then SMB on `SMBClient` with the encryption gap
