@@ -271,10 +271,16 @@ exceeded: 120.000 seconds`. In the second, 53 failed: 47 on that limit and
     gh run view <id> --repo NoiXdev/macSCP --log | /usr/bin/grep '✘ Test .*Time limit was exceeded: 120.000 seconds' | /usr/bin/grep -o 'Test [A-Za-z0-9_]*(' | sort -u | wc -l
     gh run view <id> --repo NoiXdev/macSCP --log | /usr/bin/grep -o '✘ Test [A-Za-z0-9_]*(.*) failed after' | /usr/bin/grep -o 'Test [A-Za-z0-9_]*(' | sort -u | wc -l
 
-The `sort -u` is load-bearing: the log carries every verdict twice, once
-from the test step and once from the verdicts step. So is the `0-9`: a
-first count of the second run read 46 and 52, because a class without
-digits cannot match `binaryAndNonUTF8SidesEachRefuseWithTheirOwnReason`
+Fix round 1 withdraws a claim here. This paragraph opened "The `sort -u`
+is load-bearing: the log carries every verdict twice, once from the test
+step and once from the verdicts step." For these two commands it is not:
+without the `sort -u` they print the same figures, 46 and 46 for run
+41974805488 and 47 and 53 for run 42606504360, because the verdicts step
+does not print the `✘` both of them anchor on. It is load-bearing for the
+`failed after 13[45]\.` command further down, whose pattern does match
+the verdicts step's lines: 12 lines without it, 6 names with it. What IS
+load-bearing here is the `0-9`: a first count of the second run read 46
+and 52, because a class without digits cannot match `binaryAndNonUTF8SidesEachRefuseWithTheirOwnReason`
 and drops it without a word. No `.timeLimit` of any other figure fired in
 either run. 120 s was 0.57x of the later total; the 2026-10-30 update
 had named these bounds the next candidates, and they were.
@@ -288,18 +294,32 @@ quote a bound:
 
 The second keeps only code (a `/` before the match is a comment; the raw
 minus the code count equals the comment lines, which is its positive
-control). Before this change, `git grep -h -o` with each pattern on `HEAD`
-printed raw `2 1`, `2 10`, `27 2`, `2 3`, `169 5`, and code `2 10`,
-`23 2`, `2 3`, `155 5`. After it, raw `2 1`, `2 10`, `9 2`, `2 3`,
-`190 5`, and code `2 10`, `4 2`, `1 3`, `175 5`. That is 19 ungated
+control). Before this change, on `502965ce` (on `origin/develop`):
+
+    git grep -h -o -e '\.timeLimit(\.minutes([0-9]*))' 502965ce -- Tests | sed 's/.*minutes(\([0-9]*\)).*/\1/' | sort | uniq -c
+    git grep -h -o -e '^[^/]*\.timeLimit(\.minutes([0-9]*))' 502965ce -- Tests | sed 's/.*minutes(\([0-9]*\)).*/\1/' | sort | uniq -c
+
+print raw `2 1`, `2 10`, `27 2`, `2 3`, `169 5`, and code `2 10`,
+`23 2`, `2 3`, `155 5`. After it, the two `/usr/bin/grep` commands
+before these print raw `2 1`, `2 10`, `7 2`, `2 3`, `190 5`, and code
+`2 10`, `4 2`, `1 3`, `175 5`. Fix round 1 corrects two things in that passage. It first read
+"Before this change, `git grep -h -o` with each pattern on `HEAD`
+printed", which named a revision that gives the after-figures the moment
+the change is committed. And the raw after-figure first read `9 2`: fix
+round 1 reworded two comments that quoted the old trait, which is a
+change in the comment count only — the code count, the one that says what
+was raised, is unchanged. That is 19 ungated
 two-minute traits and 1 ungated three-minute trait
 (`ConnectMainActorLivenessTests`, which on its own, serialized, reported
 `passed after 212.088 seconds` in run 42606504360) raised to five minutes.
 Left alone are the 4 gated two-minute traits (`CLIMatrixITests` twice,
 `CitadelShellIntegrationTests`, `TransportCloseRigTests`), the 1 gated
 three-minute trait (`ThroughputRigTests`) and both ten-minute bounds:
-nothing gated runs in CI (`grep -c MACSCP_ITEST .github/workflows/ci.yml`
-prints 0), so the wall clock this paragraph is about is not theirs.
+nothing gated runs in CI (`/usr/bin/grep -c MACSCP_ITEST .github/workflows/ci.yml`
+prints 0 and exits 1; its positive control, the same pattern against a
+file that does gate on it,
+`/usr/bin/grep -c MACSCP_ITEST Tests/macSCPCoreTests/CLIMatrixITests.swift`,
+prints 3), so the wall clock this paragraph is about is not theirs.
 
 Why five and not ten. The step budget is not the 960 s the 2026-10-30
 update divided by: `.github/workflows/ci.yml` has read
@@ -352,14 +372,43 @@ named hang. The fix is one constant, `LoopbackFTPDeadline` in
 `aDataReadIsBoundedByItsOwnIdleTimeoutAndNotByTheDialsTimeout` already
 used), and a tuning that raises the shipped 60 s reply-idle and 120 s
 data-idle bounds to the same, since both sit under the 135 s stall too.
-It replaces the short figure at 21 sites in six test files, and one more
-site, the `AUTH` answered with `334` case, dropped its `.seconds(2)` to
-fall through to the helper default, because it asserts a refusal and not
-a timeout. Counted on the code lines, where each use now has its own line:
+It replaces 24 short figures in six test files: 21 `.seconds(30)`, the
+`.seconds(20)` of `FTPStoredSessionTests`' `DiagnosticContext`, the
+`.seconds(2)` of the `AUTH` answered with `334` case — dropped so it
+falls through to the helper default, because it asserts a refusal and not
+a timeout — and, from fix round 1, the `timeoutSeconds: 30` that
+`FTPConnectionPoolTests`' `slotsThroughTheBackend` hands
+`BackendDescriptor.openConnection`, now `LoopbackFTPDeadline.dialSeconds`.
+Before and after, over every FTP test file:
 
-    /usr/bin/grep -rh -o '^[^/]*LoopbackFTPDeadline\.[a-z]*' Tests --include='*Tests.swift' | /usr/bin/grep -o 'LoopbackFTPDeadline\.[a-z]*$' | sort | uniq -c
+    git grep -h -o -e '\.seconds(30)' -e '\.seconds(20)' -e '\.seconds(2)[^0-9]' -e 'timeoutSeconds: 30' 502965ce -- 'Tests/macSCPCoreTests/FTP*Tests.swift' | sort | uniq -c
+    /usr/bin/grep -h -o -e '\.seconds(30)' -e '\.seconds(20)' -e '\.seconds(2)[^0-9]' -e 'timeoutSeconds: 30' Tests/macSCPCoreTests/FTP*Tests.swift | sort | uniq -c
 
-prints `22 LoopbackFTPDeadline.dial` and `9 LoopbackFTPDeadline.tuning`.
+The first prints `1 .seconds(2))`, `1 .seconds(20)`, `23 .seconds(30)`,
+`1 timeoutSeconds: 30`; the second `2 .seconds(30)`, which are the two
+kept by name: `FTPConnectionPoolTests`' `slots(configured:)`, whose pool
+is never dialled, and the gated `FTPFileSystemIntegrationTests`, which
+dials the Docker rig and not the in-process server. Fix round 1 withdraws
+the count this passage first gave, verbatim: "It replaces the short
+figure at 21 sites in six test files, and one more site". Twenty-one had
+no command beside it, and "site" was never defined: five of the call
+sites carry two figures each (`timeout:` and `idleTimeout:`), and two
+changed only a `Tuning` and carried no short `.seconds` at all. The
+figure count above is the checkable unit. Counted on the code lines,
+where each use now has its own line:
+
+    /usr/bin/grep -rh -o '^[^/]*LoopbackFTPDeadline\.[A-Za-z]*' Tests --include='*Tests.swift' | /usr/bin/grep -o 'LoopbackFTPDeadline\.[A-Za-z]*$' | sort | uniq -c
+
+prints `22 LoopbackFTPDeadline.dial`, `1 LoopbackFTPDeadline.dialSeconds`
+and `9 LoopbackFTPDeadline.tuning`. Of the 22 `dial` lines, 4 are
+default-parameter declarations
+(`/usr/bin/grep -rn 'Duration = LoopbackFTPDeadline\.dial' Tests --include='*Tests.swift' | wc -l`),
+and of the 9 `tuning` lines, 3 are
+(`/usr/bin/grep -rn 'Tuning = LoopbackFTPDeadline\.tuning' Tests --include='*Tests.swift' | wc -l`);
+the others are call sites. Fix round 1 corrects the command: it first
+read `[a-z]*` in both places, which reads `dialSeconds` as `dial`, and
+printed "`22 LoopbackFTPDeadline.dial` and `9 LoopbackFTPDeadline.tuning`"
+before that constant existed.
 Kept short, because each ASSERTS the timeout it sets:
 `theConnectTimeoutIsHonouredRatherThanDropped` (400 ms, `.failed(.timedOut)`
 and a floor), `aReplyBoundThatFiresClosesTheConnection` (200 ms reply

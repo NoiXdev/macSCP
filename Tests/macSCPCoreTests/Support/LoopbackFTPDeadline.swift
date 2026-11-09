@@ -35,6 +35,10 @@ enum LoopbackFTPDeadline {
     /// every reply wait until the dial is finished.
     static let dial: Duration = .seconds(600)
 
+    /// `dial` in whole seconds, for the entry points that take an `Int`
+    /// (`BackendDescriptor.openConnection(_:hostKey:certificate:timeoutSeconds:transferSlots:)`).
+    static let dialSeconds = Int(dial.components.seconds)
+
     /// The shipped tuning with both idle bounds raised to `dial`.
     ///
     /// The shipped figures are 60 s for a silent reply and 120 s for a silent

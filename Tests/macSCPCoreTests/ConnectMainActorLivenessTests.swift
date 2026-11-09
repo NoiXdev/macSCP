@@ -81,9 +81,11 @@ import Testing
 /// demonstration of what a blocking wait on the main actor costs everything
 /// else scheduled on it.
 ///
-/// The `.timeLimit` is three minutes rather than the project default of one,
-/// and the reason is the runner, not the tests. Two of the four cases dial
-/// for seconds on purpose: measured 2026-09-04 on this machine,
+/// The `.timeLimit` was three minutes when the project default was one (this
+/// sentence read "is three minutes rather than the project default of one"
+/// until 2026-11-09; both figures are five now, see below), and the reason
+/// for more than one minute is the runner, not the tests. Two of the four
+/// cases dial for seconds on purpose: measured 2026-09-04 on this machine,
 /// `awaitingTheConnectorDoesNotKeepTheMainActor` took 5.775 s alone and
 /// 17.510 s inside a full parallel `swift test`, and
 /// `theMainActorKeepsRunningWhileARealDialStalls` took 7.098 s either way
@@ -92,9 +94,10 @@ import Testing
 /// with nothing under test — the ambient control printed by run 33707411271
 /// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner"). One
 /// minute leaves under three such ambient stalls of headroom above the
-/// intrinsic cost. Three minutes is an emergency exit for a hang, which is
-/// all a `.timeLimit` is for here, and not a budget any case is expected to
-/// approach.
+/// intrinsic cost. Three minutes was an emergency exit for a hang (this
+/// sentence read "Three minutes is" until 2026-11-09), and so is the five it
+/// carries now: that is all a `.timeLimit` is for here, and not a budget any
+/// case is expected to approach.
 ///
 /// It read `.timeLimit(.minutes(3))` until 2026-11-09. Three minutes had
 /// fallen below the whole suite's own wall clock: CI run 42606504360 took
@@ -650,7 +653,10 @@ private final class OneShotFlag: @unchecked Sendable {
 // without blocking on cancellation, now lives in
 // `Tests/MacSCPTestSupport/AwaitCancellably.swift` — see its doc comment
 // there for the measured 60 s/90.005 s and 180 s/192.003 s comparison this
-// suite's own three-minute `.timeLimit` above depends on.
+// suite's own `.timeLimit` above depends on. That comparison was measured
+// under the three-minute bound this suite carried until 2026-11-09; the
+// bound is five minutes now, and what it depends on is the wait being
+// cancellation-aware, not the figure.
 
 /// A NIO resolver that starts queries and never answers them — a host whose
 /// name resolution hangs, without any DNS traffic.

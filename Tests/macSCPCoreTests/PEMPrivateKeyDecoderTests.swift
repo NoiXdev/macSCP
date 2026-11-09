@@ -14,7 +14,9 @@ import macSCPCore
 /// decoder read the wrong bytes, the public key it can build from them does
 /// not match the one OpenSSH builds.
 ///
-/// `.timeLimit(.minutes(2))`: the widest test is `decodesEveryShape`, which
+/// Why this suite carried a two-minute bound until 2026-11-09 (this line
+/// opened with that trait's own spelling, as though it described the current
+/// one): the widest test is `decodesEveryShape`, which
 /// expands to 16 cases — `PEMFixtures.Shape.all` is eight, times plain and
 /// encrypted — and every case generates one key with `ssh-keygen` and reads it
 /// back with `ssh-keygen -y`: 16 keys, 32 process starts, four of them

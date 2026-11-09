@@ -946,7 +946,8 @@ struct FTPConnectionPoolTests {
                     .ftp(FTPConnectionConfig(
                         host: host, port: port, username: credentials.username,
                         security: .plain, password: credentials.password)),
-                    hostKey: .refusing, certificate: .refusing, timeoutSeconds: 30,
+                    hostKey: .refusing, certificate: .refusing,
+                    timeoutSeconds: LoopbackFTPDeadline.dialSeconds,
                     transferSlots: slots)
                 built.append((fileSystem as? FTPFileSystem)?.pool.configuredSlots ?? -1)
                 await fileSystem.disconnect()

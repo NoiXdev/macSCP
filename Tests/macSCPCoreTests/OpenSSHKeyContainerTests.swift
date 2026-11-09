@@ -14,7 +14,9 @@ import macSCPCore
 /// reads. This suite is that parser used as the oracle: what it reads back
 /// must name the same public key `ssh-keygen -y` names for the source file.
 ///
-/// `.timeLimit(.minutes(2))`: the padding test expands to eight cases, one
+/// Why this suite carried a two-minute bound until 2026-11-09 (this line
+/// opened with that trait's own spelling, as though it described the current
+/// one): the padding test expands to eight cases, one
 /// per remainder, and each of them generates a key with `ssh-keygen` and
 /// reads it back with `ssh-keygen -y` — eight keys, sixteen process starts,
 /// counted against `rsaFixture(in:)` on 2026-09-10. The trait bounds a hang,
