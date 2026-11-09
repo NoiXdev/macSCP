@@ -86,6 +86,16 @@ public struct PermissionsTreeResult: Equatable, Sendable {
 /// parser is not widened, because both would be changes made on a
 /// hypothesis.
 ///
+/// **Measured on 2026-11-09 for one server, ProFTPD, and the answer is the
+/// good one.** Its `MLSD` spells a symlink `type=OS.unix=symlink`, which
+/// `FTPListParser.mlsd` reads as `.symlink`, and its `LIST` writes `l` at
+/// column 0, which the Unix reader reads the same way; neither listing
+/// contained an `.other`. (Withdrawn wording, verbatim: "the FTP half is
+/// UNMEASURED" and "Until then: nothing is excluded from this walk". The first
+/// is now false of that one server and still true of every other; the second
+/// stands, with `docs/BACKLOG.md` carrying the commands, the figures and what
+/// was not asked of any other server.)
+///
 /// The root's kind is supplied by the CALLER (the browser already has it
 /// from its own listing) rather than re-derived here via a stat probe.
 /// Unlike `deleteTree`, which has no caller-supplied kind for its own top
