@@ -1,0 +1,69 @@
+name: Announce release
+
+# Posts a published release to the organisation's Discord channel through the
+# org's shared action, the same one every other NoiX product calls. Two ways
+# in: `release.yml` calls it once the DMG is up and the release is public,
+# and it can be dispatched by hand for a release that is already out, such as
+# v1.7.0, which shipped before this workflow existed.
+#
+# The notes and the URL are read back from the published release rather than
+# passed in, so a hand dispatch needs nothing but the tag and posts exactly
+# what the releases page shows.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published release tag to announce (e.g. v1.7.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    name: Post to Discord
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          json=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,url,body)
+          # A draft has no public page yet, and an announcement linking to one
+          # sends every reader to a 404.
+          if [ "$(jq -r .isDraft <<< "$json")" = "true" ]; then
+            echo "::error::$TAG is still a draft; announce it once it is published."
+            exit 1
+          fi
+          echo "url=$(jq -r .url <<< "$json")" >> "$GITHUB_OUTPUT"
+          {
+            echo 'body<<NOIX_RELEASE_BODY_EOF'
+            jq -r .body <<< "$json"
+            echo 'NOIX_RELEASE_BODY_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post the announcement
+        # A notification is the least important thing a release does and must
+        # never turn a shipped release red. The shared action clips the notes
+        # to Discord's 4096-character embed limit and links the full page.
+        continue-on-error: true
+        # Unpinned on purpose, as in the other products: the org's own action
+        # publishes no tags. This relies on the repository's
+        # `sha_pinning_required` being off, which a branch ref needs to
+        # resolve at all.
+        uses: NoiXdev/github-workflows/actions/announce-release@main
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTIFICATION }}
+          tag: ${{ inputs.tag }}
+          body: ${{ steps.release.outputs.body }}
+          url: ${{ steps.release.outputs.url }}
+          product-name: macSCP

@@ -211,6 +211,16 @@ jobs:
           # of draft, so it must carry it too.
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
 
+  announce:
+    name: Announce on Discord
+    # After `build`, because that job is what takes the release out of draft;
+    # a failed build published nothing, so a skipped announcement is right.
+    needs: build
+    uses: ./.github/workflows/announce.yml
+    with:
+      tag: ${{ github.event.inputs.tag || github.ref_name }}
+    secrets: inherit
+
   tap:
     name: Bump the Homebrew cask
     needs: build
