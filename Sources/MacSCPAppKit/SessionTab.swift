@@ -634,8 +634,10 @@ final class SessionTab: Identifiable {
     /// A request for the create-bucket sheet, made by the connection
     /// manager's "Connect and Create Bucket…" entry (S3 metadata plan, Task 6;
     /// spec 6.6): "open this sheet on this tab once it is connected and
-    /// showing its bucket list". `nil` for every tab that was not opened for
-    /// that, which is every tab but the one such a start picked.
+    /// showing its bucket list". `nil` for every tab that was not asked for
+    /// that: the tab such a start picked, and the tab "Go to Existing Tab"
+    /// activates when the already-open question was raised for that entry
+    /// (maintainer decision of 2026-11-10), are the only ones that hold one.
     ///
     /// It lives on the TAB, for the reason `pendingSnippetRun` does: the
     /// connect it belongs to is one tab's, and a window-wide value would open

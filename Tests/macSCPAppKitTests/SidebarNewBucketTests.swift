@@ -2292,6 +2292,41 @@ struct SidebarNewBucketTests {
             "the runner's `.onChange(of: signal, initial: true)` no longer calls `onDeliver(tab)`")
     }
 
+    /// The request being armed wakes the runner. "Go to Existing Tab" onto a
+    /// tab that is already connected, already in front and already showing its
+    /// loaded list gives the runner no connect, no tab switch and no load to
+    /// react to: the `armed` fact of its signal is the only thing that changes,
+    /// so a signal without it delivers nothing for exactly that case and every
+    /// behaviour test above stays green (they call the delivery directly).
+    ///
+    /// Read from source, because `.onChange` is not reachable from a test in
+    /// this project, and from the comment-free view: the field's own doc
+    /// comment names the fact and must not be able to satisfy the scan. The
+    /// positive controls are the neighbouring fields in the same struct and the
+    /// neighbouring arguments in the same construction -- a scan that cannot
+    /// find them has found the wrong block, and its silence about `armed` would
+    /// mean nothing. The existing facts check above names the request's
+    /// property too, but only as a substring of the whole struct, so it would
+    /// also pass on a signal that mentions the property and does not declare a
+    /// field for it.
+    @Test func theRunnersSignalCarriesTheRequestBeingArmed() throws {
+        let runner = try Self.functionBody(
+            named: "struct PendingCreateBucketRunner: View {", in: Self.detailFile)
+        let declaration = try Self.functionBody(named: "private struct Signal: Equatable {", in: runner)
+        let construction = try Self.functionBody(named: "private var signal: Signal {", in: runner)
+        // The controls.
+        #expect(declaration.code.contains("let remoteState:"), "the extraction did not find the signal's declaration")
+        #expect(declaration.code.contains("let activeTabID: UUID"))
+        #expect(construction.code.contains("remoteState: tab.session?.remote.state"), """
+            the extraction did not find the signal's construction
+            """)
+        // The fact itself: declared, and read from the tab's request.
+        #expect(declaration.code.contains("let armed: Bool"), "the runner's signal no longer declares `armed`")
+        #expect(
+            construction.code.contains("armed: tab.pendingCreateBucket != nil"),
+            "the runner's signal no longer reads `armed` from the tab's pending request")
+    }
+
     /// "Open Anyway" starts what was asked for. The answer lives in a view
     /// modifier no test can press, so the pass-through is read from source:
     /// the dialog hands `request.createsBucket` on, and builds no sheet.

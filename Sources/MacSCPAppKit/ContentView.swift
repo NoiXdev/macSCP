@@ -1861,8 +1861,10 @@ struct ContentView: View {
     }
 
     /// Opens the create-bucket sheet on a tab the connection manager's
-    /// "Connect and Create Bucket…" connected (S3 metadata plan, Task 6) --
-    /// evaluated fresh every time a fact it reads changes;
+    /// "Connect and Create Bucket…" armed -- one it connected, or one that
+    /// was already connected and that "Go to Existing Tab" carried the
+    /// request over to (S3 metadata plan, Task 6; maintainer decision of
+    /// 2026-11-10) -- evaluated fresh every time a fact it reads changes;
     /// `PendingCreateBucketRunner` is the view that watches them.
     ///
     /// **It goes THROUGH the route.** The sheet is opened by

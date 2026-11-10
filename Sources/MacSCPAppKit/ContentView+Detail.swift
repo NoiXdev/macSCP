@@ -3240,8 +3240,10 @@ struct PendingSnippetRunner: View {
 }
 
 /// Hands the create-bucket sheet to the route once the tab the connection
-/// manager's "Connect and Create Bucket…" opened is connected, in front, and
-/// showing a bucket list that has loaded (S3 metadata plan, Task 6) --
+/// manager's "Connect and Create Bucket…" armed is connected, in front, and
+/// showing a bucket list that has loaded -- a tab that entry opened, or a tab
+/// that was already connected and that "Go to Existing Tab" carried the
+/// request over to (S3 metadata plan, Task 6) --
 /// mounted per tab in `ContentView.splitLayout`'s `.background`, for every
 /// tab and not only the active one, for the reason `PendingSnippetRunner`
 /// states: the connect can finish while the user is looking at another tab.
@@ -3296,6 +3298,10 @@ struct PendingCreateBucketRunner: View {
     /// `Equatable` value. A fact that method starts reading and this struct
     /// does not carry is a wake-up that will not happen.
     private struct Signal: Equatable {
+        /// The request being armed is itself a wake-up. A tab that is already
+        /// connected, in front and showing its loaded list, and that "Go to
+        /// Existing Tab" carries a request over to, has no connect, no tab
+        /// switch and no load coming: this is the only fact that changes.
         let armed: Bool
         let sessionID: UUID?
         let remoteState: RemoteBrowserViewModel.State?
