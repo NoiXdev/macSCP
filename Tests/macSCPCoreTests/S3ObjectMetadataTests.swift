@@ -526,6 +526,67 @@ struct S3ObjectMetadataTests {
         #expect(methods == ["PUT", "HEAD"])
     }
 
+    /// The path that needs no typing: an object that ALREADY carries a
+    /// non-ASCII custom value, opened, with ANOTHER field changed and saved.
+    /// The sheet sends every field on every save, so the value read (decoded)
+    /// goes out again and has to go out encoded, or the store answers
+    /// `SignatureDoesNotMatch` for an edit that never touched it. Run for both
+    /// forms a store can answer the HEADs in: the encoded word, which is what
+    /// rustfs was measured returning, and the text itself, which is the raw
+    /// form a store might keep and which is covered by this fake only (the
+    /// fake builds the answer from a Swift `String`, so it skips how the
+    /// transport turns raw header bytes into text, which is unmeasured). The
+    /// read-back comparison has to find both equal to what was typed. Every
+    /// expectation about the value is a precomputed `Bool`.
+    @Test(arguments: [true, false])
+    func editingAnotherFieldOfAnObjectHoldingANonASCIIValueSendsItEncodedAndConfirms(
+        storeAnswersEncoded: Bool
+    ) async throws {
+        let answer =
+            storeAnswersEncoded ? Self.typedNonASCIIAsEncodedWord : Self.typedNonASCII
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.head(["Content-Type": "text/markdown", "x-amz-meta-note": answer]),
+            Self.copied,
+            Self.head(["Content-Type": "text/plain", "x-amz-meta-note": answer]),
+        ])
+
+        var opened = try await fs.metadata(ofKey: "a.txt", inBucket: Self.bucket)
+        let openedAsTyped = opened.custom["note"] == Self.typedNonASCII
+        #expect(openedAsTyped)
+        opened.contentType = "text/plain"
+        try await fs.setMetadata(opened, ofKey: "a.txt", inBucket: Self.bucket)
+
+        let requests = await Self.sent(transport)
+        #expect(requests.map(\.httpMethod) == ["HEAD", "PUT", "HEAD"])
+        let put = try #require(requests.dropFirst().first)
+        let sent = try #require(put.value(forHTTPHeaderField: "x-amz-meta-note"))
+        let sentIsTheEncodedWord = sent == Self.typedNonASCIIAsEncodedWord
+        #expect(sentIsTheEncodedWord)
+        #expect(put.value(forHTTPHeaderField: "Content-Type") == "text/plain")
+    }
+
+    /// Review Focus 1 at the wire boundary: an ASCII value a person typed
+    /// that is itself spelled like an encoded word. It must go out encoded
+    /// (as the word whose payload is the typed text, not as the typed text,
+    /// which a decoder would turn into something else) and the write must be
+    /// confirmed against what was typed. Expectations are precomputed `Bool`s.
+    @Test func aTypedValueSpelledLikeAnEncodedWordIsSentEncodedAndConfirmed() async throws {
+        let typed = "=?UTF-8?B?SGk=?="
+        let expectedOnTheWire = "=?UTF-8?B?PT9VVEYtOD9CP1NHaz0/PQ==?="
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.copied, Self.head(["x-amz-meta-note": expectedOnTheWire]),
+        ])
+
+        try await fs.setMetadata(Self.noteOnly(typed), ofKey: "a.txt", inBucket: Self.bucket)
+
+        let put = try #require(await Self.sent(transport).first)
+        let sent = try #require(put.value(forHTTPHeaderField: "x-amz-meta-note"))
+        let sentIsTheOuterWord = sent == expectedOnTheWire
+        let sentIsTheTypedText = sent == typed
+        #expect(sentIsTheOuterWord)
+        #expect(sentIsTheTypedText == false)
+    }
+
     /// The control that keeps the confirmation honest: a read-back that holds
     /// some OTHER text is still an unconfirmed write, decoded or not.
     @Test func aReadBackHoldingOtherTextThanWasTypedIsStillUnconfirmed() async throws {
