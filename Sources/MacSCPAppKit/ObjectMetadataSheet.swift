@@ -113,7 +113,9 @@ enum ObjectMetadataLines {
         english: "Give every custom pair a name.")
     static let customNameInvalidLine = CatalogueLine(
         key: "s3.metadata.blocked.customNameInvalid",
-        english: "A custom name may use only letters, digits and these characters: ! # $ % & ' * + - . ^ _ ` | ~")
+        english:
+            "A custom name may use only the letters A to Z without accents, digits and these characters: ! # $ % & ' * + - . ^ _ ` | ~"
+    )
     static let customNamePrefixedLine = CatalogueLine(
         key: "s3.metadata.blocked.customNamePrefixed",
         english: "macSCP adds the prefix a custom name needs on its own. Type the name without “x-amz-meta-”.")

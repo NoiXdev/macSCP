@@ -561,7 +561,7 @@
 "s3.metadata.action.save" = "Speichern";
 "s3.metadata.blocked.unchanged" = "Es hat sich nichts geändert, also gibt es nichts zu speichern.";
 "s3.metadata.blocked.customNameMissing" = "Gib jedem eigenen Paar einen Namen.";
-"s3.metadata.blocked.customNameInvalid" = "Ein eigener Name darf nur Buchstaben, Ziffern und diese Zeichen enthalten: ! # $ % & ' * + - . ^ _ ` | ~";
+"s3.metadata.blocked.customNameInvalid" = "Ein eigener Name darf nur die Buchstaben A bis Z ohne Umlaute, ß und Akzente, Ziffern und diese Zeichen enthalten: ! # $ % & ' * + - . ^ _ ` | ~";
 "s3.metadata.blocked.customNamePrefixed" = "macSCP ergänzt das Präfix, das ein eigener Name braucht, selbst. Gib den Namen ohne „x-amz-meta-“ ein.";
 "s3.metadata.blocked.customNameDuplicated" = "Zwei eigene Paare haben denselben Namen. Groß- und Kleinschreibung unterscheidet Namen nicht.";
 "s3.metadata.blocked.contentTypeNotPlainText" = "Content-Type nimmt nur einfachen Text an, ohne Umlaute, Akzente oder andere Sonderzeichen.";

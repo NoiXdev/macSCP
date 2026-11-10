@@ -562,7 +562,7 @@
 "s3.metadata.action.save" = "Zapisz";
 "s3.metadata.blocked.unchanged" = "Nic się nie zmieniło, więc nie ma czego zapisywać.";
 "s3.metadata.blocked.customNameMissing" = "Nadaj nazwę każdej parze niestandardowej.";
-"s3.metadata.blocked.customNameInvalid" = "Nazwa niestandardowa może zawierać tylko litery, cyfry i te znaki: ! # $ % & ' * + - . ^ _ ` | ~";
+"s3.metadata.blocked.customNameInvalid" = "Nazwa niestandardowa może zawierać tylko litery od A do Z bez znaków diakrytycznych, cyfry i te znaki: ! # $ % & ' * + - . ^ _ ` | ~";
 "s3.metadata.blocked.customNamePrefixed" = "macSCP sam dodaje przedrostek, którego potrzebuje nazwa niestandardowa. Wpisz nazwę bez „x-amz-meta-”.";
 "s3.metadata.blocked.customNameDuplicated" = "Dwie pary niestandardowe mają tę samą nazwę. Wielkość liter nie odróżnia nazw.";
 "s3.metadata.blocked.contentTypeNotPlainText" = "Content-Type przyjmuje tylko zwykły tekst, bez znaków diakrytycznych ani innych znaków specjalnych.";
