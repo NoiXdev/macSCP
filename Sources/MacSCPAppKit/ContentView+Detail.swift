@@ -655,6 +655,9 @@ extension ContentView {
                                         },
                                         type: {
                                             typeFileActionBytes($0, into: session.terminal)
+                                        },
+                                        refusedInput: {
+                                            session.terminal.inputRefused
                                         })
                                 )
                                 .frame(minWidth: BrowserPane.minimumWidth)
@@ -1159,6 +1162,13 @@ extension ContentView {
                         // its own literal (see that enum's doc comment).
                         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
                         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
+                        // Input the opening buffer could not hold was
+                        // refused whole (`TerminalPanelViewModel.send`); the
+                        // flag clears when the shell runs or the attempt
+                        // ends, so this is the opening state's own message.
+                        .overlay(alignment: .bottom) {
+                            inputRefusedNotice(session.terminal, theme: theme)
+                        }
                 case .ended(let message):
                     VStack(spacing: 8) {
                         Text(message ?? L10n.string("terminal.ended", "Shell ended."))
@@ -1189,6 +1199,33 @@ extension ContentView {
                 .fill(DesignTokens.hairline)
                 .frame(height: 1)
                 .allowsHitTesting(false)
+        }
+    }
+
+    /// The sentence the terminal panel shows while `inputRefused` holds:
+    /// input was refused whole because the opening buffer could not hold it.
+    /// Nothing at all otherwise.
+    ///
+    /// A function of its own, outside the `case .running, .opening:` text
+    /// `TerminalPanelInsetTests` scans, because it is a banner and pads
+    /// like the other banners in this file (`.padding(.horizontal, 12)`),
+    /// not like the terminal surface it sits over: the inset guard pins the
+    /// surface, the `.ended` block and the header to one shared pair, and a
+    /// fourth reader of that pair would change what that guard counts.
+    @ViewBuilder
+    private func inputRefusedNotice(
+        _ terminal: TerminalPanelViewModel, theme: TerminalTheme
+    ) -> some View {
+        if terminal.inputRefused {
+            Text(L10n.string(
+                "terminal.inputRefused",
+                "Some input was not sent: the terminal is still opening."))
+                .font(.system(size: 12))
+                .foregroundStyle(theme.foreground.swiftUIColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.background.swiftUIColor.opacity(0.9))
         }
     }
 }

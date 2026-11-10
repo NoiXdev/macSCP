@@ -283,6 +283,7 @@
 /* Terminal-Panel */
 "terminal.ended" = "Shell beendet.";
 "terminal.reopen" = "Neu öffnen";
+"terminal.inputRefused" = "Ein Teil der Eingabe wurde nicht gesendet: Das Terminal wird noch geöffnet.";
 "terminal.snippets.button" = "Snippets";
 
 /* Remote-Dateitabelle: Spalten */

@@ -49,10 +49,26 @@ public final class TerminalPanelViewModel {
     ///
     /// Belongs to ONE open attempt: cleared when an open starts, when one
     /// fails, when the shell ends, and on `shutdown()`. Capped like
-    /// `replayBuffer` above — bytes past the cap are dropped rather than
-    /// growing without bound behind an open that never completes.
+    /// `replayBuffer` above, so it cannot grow without bound behind an open
+    /// that never completes -- but unlike `replayBuffer`, which may forget
+    /// its oldest output, this buffer holds input that was never delivered,
+    /// and it is never trimmed. A `send(_:onDelivered:)` that does not fit in
+    /// what is left of the cap is refused WHOLE (see `inputRefused`): a
+    /// command line cut short is worse than none, and a prefix kept beside a
+    /// callback that fires would report a delivery that did not happen.
     private var pendingBytes: [UInt8] = []
     private static let maxPendingBytes = 64 * 1024
+
+    /// Whether a `send(_:onDelivered:)` was refused during this open
+    /// attempt because the opening buffer could not hold it, so the panel
+    /// can say so instead of the input vanishing.
+    ///
+    /// Belongs to the same open attempt as `pendingBytes` and is reset at
+    /// the same points: when an open starts, when one fails, when the shell
+    /// ends, and on `shutdown()` (all through `discardPendingInput()`), and
+    /// also when the shell runs. From then on a send is no longer held at
+    /// all, and a sentence about an opening terminal would be stale.
+    public private(set) var inputRefused = false
 
     /// Delivery callbacks belonging to the bytes in `pendingBytes`, kept
     /// beside them because the buffer is a flat byte array: several buffered
@@ -172,6 +188,7 @@ public final class TerminalPanelViewModel {
                 }
                 self.shell = shell
                 state = .running
+                inputRefused = false
                 // Before the bytes, not beside them: `flushPendingBytes()`
                 // can start a full-screen program (a menu snippet buffered
                 // by `ContentView.sendSnippet`, which opens the panel and
@@ -263,9 +280,13 @@ public final class TerminalPanelViewModel {
     /// rather than two assignments at each site, so a later drop path cannot
     /// clear the bytes and leave a callback behind that would then report a
     /// delivery which never happened.
+    ///
+    /// Also forgets `inputRefused`: the refusal describes the attempt whose
+    /// buffer this was, and every drop path here is the end of that attempt.
     private func discardPendingInput() {
         pendingBytes = []
         pendingDeliveries = []
+        inputRefused = false
     }
 
     /// Forgets both geometries, because the shell they describe is starting,
@@ -406,17 +427,30 @@ public final class TerminalPanelViewModel {
     /// read loop anyway.
     ///
     /// While the shell is still opening the bytes are held and sent as soon
-    /// as it runs (see `pendingBytes`). In every other shell-less state
-    /// (`.closed`, `.ended`) they are dropped: nothing is on its way that
-    /// could ever deliver them.
-    public func send(_ bytes: [UInt8], onDelivered: (@MainActor () -> Void)? = nil) {
+    /// as it runs (see `pendingBytes`), unless they do not fit in what is
+    /// left of the buffer: then the WHOLE call is refused -- no prefix is
+    /// kept, `onDelivered` is never recorded, and `inputRefused` turns on.
+    /// In every other shell-less state (`.closed`, `.ended`) the bytes are
+    /// dropped: nothing is on its way that could ever deliver them.
+    ///
+    /// Returns whether the bytes were taken: `true` when they were handed to
+    /// the shell's send chain or are held for the shell that is opening,
+    /// `false` when they were refused or dropped. `true` is not a delivery
+    /// -- that is what `onDelivered` reports, later and only if it happens
+    /// -- but `false` is a certainty that nothing will go out, so a caller
+    /// that sends several pieces can stop instead of typing the later ones
+    /// without the earlier one.
+    @discardableResult
+    public func send(_ bytes: [UInt8], onDelivered: (@MainActor () -> Void)? = nil) -> Bool {
         guard let shell else {
-            if state == .opening {
-                pendingBytes.append(
-                    contentsOf: bytes.prefix(Self.maxPendingBytes - pendingBytes.count))
-                if let onDelivered { pendingDeliveries.append(onDelivered) }
+            guard state == .opening else { return false }
+            guard bytes.count <= Self.maxPendingBytes - pendingBytes.count else {
+                inputRefused = true
+                return false
             }
-            return
+            pendingBytes.append(contentsOf: bytes)
+            if let onDelivered { pendingDeliveries.append(onDelivered) }
+            return true
         }
         let previous = sendTask
         sendTask = Task {
@@ -430,6 +464,7 @@ public final class TerminalPanelViewModel {
                 // exists so a caller can record what actually went out.
             }
         }
+        return true
     }
 
     /// Reports a new terminal size (SSH window-change).

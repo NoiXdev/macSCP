@@ -285,6 +285,7 @@
 /* Panneau du terminal */
 "terminal.ended" = "Shell terminé.";
 "terminal.reopen" = "Rouvrir";
+"terminal.inputRefused" = "Une partie de la saisie n’a pas été envoyée : le terminal est encore en cours d’ouverture.";
 "terminal.snippets.button" = "Snippets";
 
 /* Colonnes du tableau de fichiers distant */

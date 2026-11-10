@@ -283,6 +283,7 @@
 /* Terminal panel */
 "terminal.ended" = "Shell ended.";
 "terminal.reopen" = "Reopen";
+"terminal.inputRefused" = "Some input was not sent: the terminal is still opening.";
 "terminal.snippets.button" = "Snippets";
 
 /* Remote file table columns */

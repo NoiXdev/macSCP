@@ -1616,7 +1616,12 @@ struct ContentView: View {
     /// prompt and can be edited before it runs. Recorded from `send`'s
     /// delivery callback rather than after the call, so a shell that never
     /// opens -- the bytes buffered and then discarded -- leaves no entry
-    /// claiming the snippet ran. `SnippetAuditDetail.text(for:)` reads
+    /// claiming the snippet ran. The same holds for a snippet too long for
+    /// the opening buffer: `send` refuses it whole and never records the
+    /// callback, so the audit log gains no entry and the terminal panel
+    /// carries the sentence saying input was not sent. The Bool `send`
+    /// returns is not read here for that reason: the callback is the record,
+    /// and the refusal is already visible. `SnippetAuditDetail.text(for:)` reads
     /// `snippet.command` — the TEMPLATE, never the dry run's resolved
     /// command — so a typed value never reaches the audit log; see
     /// `SnippetAuditDetailTests.variableValuesStayOutOfTheAuditLog`, and
@@ -1662,8 +1667,12 @@ struct ContentView: View {
 
     /// Types `bytes` into `terminal` for a user-defined file action, the way
     /// `sendSnippet` sends a snippet's. `false` when that terminal is not the
-    /// active tab's, or the tab has no shell, so the pane can say so instead
-    /// of doing nothing.
+    /// active tab's, or the tab has no shell, or the terminal refused the
+    /// bytes (`TerminalPanelViewModel.send` returns `false` for a send its
+    /// opening buffer cannot hold), so the pane stops instead of typing the
+    /// next line without this one. The pane tells the two apart through
+    /// `FileActionShell.refusedInput`: a refusal is already worded by the
+    /// terminal panel, and "this connection has none" would be false of it.
     ///
     /// The destination is NAMED by the caller (the pane's own session), and
     /// the bytes go there or nowhere: revealing the panel and persisting its
@@ -1678,8 +1687,7 @@ struct ContentView: View {
         guard activeTabSupportsShell, activeTab.session?.terminal === terminal,
             openActiveShell() === terminal
         else { return false }
-        terminal.send(bytes)
-        return true
+        return terminal.send(bytes)
     }
 
     /// Persists every opted-in value (`SnippetVariable.remembersLastValue

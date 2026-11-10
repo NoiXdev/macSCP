@@ -622,7 +622,10 @@ struct TerminalPanelViewModelTests {
     }
 
     /// The hold is bounded (64 KiB), so an open that never completes cannot
-    /// let it grow without limit — same discipline as `replayBuffer`.
+    /// let it grow without limit -- same discipline as `replayBuffer`. What
+    /// differs from that buffer is the overflow: a send that does not fit is
+    /// refused WHOLE rather than truncated; the refusal's other consequences
+    /// are pinned in `TerminalPanelViewModelDeliveryTests`.
     @Test func bytesHeldWhileOpeningAreBounded() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in
@@ -631,21 +634,17 @@ struct TerminalPanelViewModelTests {
         })
 
         vm.openIfNeeded()
-        vm.send([UInt8](repeating: 1, count: 50_000))
-        vm.send([UInt8](repeating: 2, count: 50_000))
+        let first = vm.send([UInt8](repeating: 1, count: 50_000))
+        let second = vm.send([UInt8](repeating: 2, count: 50_000))
+        #expect(first)
+        #expect(second == false)
 
         try await pollUntil("the shell is running") { vm.state == .running }
-
-        #expect(vm.state == .running)
         try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
-        #expect(!shell.sent.isEmpty)
         let delivered = shell.sent.flatMap { $0 }
-        #expect(delivered.count == 64 * 1024)
-        // The cap truncates the tail, it does not evict the head: what
-        // arrives is the START of the input, so a command is cut short
-        // rather than silently rewritten into a different one.
-        #expect(delivered.first == 1)
-        #expect(delivered.last == 2)
+        // Only the first send arrived, entire. No prefix of the second was
+        // kept: a command line cut short is worse than none.
+        #expect(delivered == [UInt8](repeating: 1, count: 50_000))
     }
 }
 
@@ -1120,6 +1119,148 @@ struct TerminalPanelViewModelDeliveryTests {
         if case .ended = vm.state {} else {
             Issue.record("expected the panel to end after a failed open, got \(vm.state)")
         }
+    }
+
+    // MARK: - Input the opening buffer cannot hold
+
+    @Test func anOverCapSendWhileOpeningIsRefusedWholeAndItsCallbackNeverFires() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+
+        let firstDelivered = Box()
+        let secondDelivered = Box()
+        let first = vm.send([UInt8](repeating: 1, count: 60_000)) { firstDelivered.bump() }
+        let second = vm.send([UInt8](repeating: 2, count: 10_000)) { secondDelivered.bump() }
+        let accepted = (first: first, second: second)
+        #expect(accepted == (first: true, second: false))
+        #expect(vm.inputRefused)
+
+        gate.open()
+        await firstDelivered.waitForFirstDelivery()
+        // The accepted send is the only one the shell ever hears of, and
+        // whole: nothing of the refused one was kept as a prefix.
+        #expect(shell.sent.flatMap { $0 } == [UInt8](repeating: 1, count: 60_000))
+        #expect(firstDelivered.count == 1)
+        // Give a mistaken late callback time to show up before asserting it
+        // did not.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(secondDelivered.count == 0)
+    }
+
+    @Test func aSendThatFillsTheBufferExactlyIsAcceptedAndRefusesNothing() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+
+        let delivered = Box()
+        let accepted = vm.send([UInt8](repeating: 7, count: 64 * 1024)) { delivered.bump() }
+        #expect(accepted)
+        #expect(vm.inputRefused == false)
+
+        gate.open()
+        await delivered.waitForFirstDelivery()
+        let sentCount = shell.sent.flatMap { $0 }.count
+        #expect(sentCount == 64 * 1024)
+        #expect(delivered.count == 1)
+    }
+
+    @Test func theRefusalClearsWhenTheShellRuns() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        let accepted = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        #expect(accepted == false)
+        #expect(vm.inputRefused)
+
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.inputRefused == false)
+        // Nothing was held, so nothing is flushed.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(shell.sent.isEmpty)
+    }
+
+    @Test func theRefusalClearsWhenTheOpenFailsAndStaysClearOnTheNextAttempt() async throws {
+        struct OpenFailure: Error {}
+        let attempts = Counter()
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            await attempts.increment()
+            if await attempts.value == 1 { throw OpenFailure() }
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        let accepted = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        #expect(accepted == false)
+        #expect(vm.inputRefused)
+
+        try await pollUntil("the panel ended") {
+            if case .ended = vm.state { return true } else { return false }
+        }
+        #expect(vm.inputRefused == false)
+
+        // Reopen: a new attempt starts without the old one's refusal.
+        vm.openIfNeeded()
+        #expect(vm.state == .opening)
+        #expect(vm.inputRefused == false)
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        await vm.shutdown()
+    }
+
+    @Test func shutdownDuringOpeningClearsTheRefusal() async throws {
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return MockShell()
+        })
+        vm.openIfNeeded()
+        vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        #expect(vm.inputRefused)
+
+        gate.open()
+        await vm.shutdown()
+        #expect(vm.inputRefused == false)
+    }
+
+    @Test func aSendWithNoShellAndNothingOpeningIsDroppedWithoutARefusalSentence() {
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in MockShell() })
+        let accepted = vm.send([0x61])
+        #expect(accepted == false)
+        // Nothing is opening, so "the terminal is still opening" would be
+        // false of it.
+        #expect(vm.inputRefused == false)
+    }
+
+    @Test func aSendToARunningShellIsAccepted() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.openIfNeeded()
+        try await pollUntil("the shell is running") { vm.state == .running }
+
+        let delivered = Box()
+        // Larger than the opening buffer: the cap binds only the hold.
+        let accepted = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1)) { delivered.bump() }
+        #expect(accepted)
+        await delivered.waitForFirstDelivery()
+        #expect(vm.inputRefused == false)
+        let sentCount = shell.sent.flatMap { $0 }.count
+        #expect(sentCount == 64 * 1024 + 1)
     }
 
     // MARK: - Finding 3: remoteWantsBracketedPaste

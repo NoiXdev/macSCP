@@ -31,8 +31,14 @@ struct FileActionShell {
     /// `SnippetSendPlanner` needs to know to send a multi-line command.
     let wantsBracketedPaste: () -> Bool
     /// Opens the tab's terminal if it is closed and hands it the bytes, the
-    /// way a snippet is sent. `false` when the tab has no shell at all.
+    /// way a snippet is sent. `false` when the tab has no shell at all, or
+    /// when the terminal refused the bytes: see `refusedInput`.
     let type: ([UInt8]) -> Bool
+    /// Whether the terminal refused input of this attempt because its
+    /// opening buffer was full. Read after `type` returned `false`, to tell
+    /// "no shell" from "a shell that has not opened yet and cannot hold
+    /// more": the second is already worded by the terminal panel.
+    let refusedInput: () -> Bool
 }
 
 extension BrowserPane {
@@ -127,7 +133,12 @@ extension BrowserPane {
             {
             case .send(let bytes):
                 guard shell.type(bytes) else {
-                    fileActionAlertMessage = Self.noShellSentence
+                    // Stops here either way: a later, shorter line must not
+                    // be typed without this one. Only the first reason is
+                    // an alert; the second is the terminal panel's sentence.
+                    if !shell.refusedInput() {
+                        fileActionAlertMessage = Self.noShellSentence
+                    }
                     return
                 }
             case .refusedMultilineInsert:
