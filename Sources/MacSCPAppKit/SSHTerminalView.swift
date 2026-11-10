@@ -250,7 +250,9 @@ struct SSHTerminalView: NSViewRepresentable {
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             let bytes = Array(data)
             let viewModel = self.viewModel
-            MainActor.assumeIsolated { viewModel.send(bytes) }
+            // The Bool is not needed here: a refused keystroke is announced
+            // by the panel's own notice, not by the terminal view.
+            MainActor.assumeIsolated { _ = viewModel.send(bytes) }
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
