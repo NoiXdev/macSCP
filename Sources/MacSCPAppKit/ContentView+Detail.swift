@@ -1045,8 +1045,12 @@ extension ContentView {
                 // Plaintext-transport confirmation (M21/T10): asked by the
                 // connector closure (`ContentView.makeTab`) before it ever
                 // dispatches a connect whose transport is `.optionalTLS` and
-                // whose endpoint is `http://`. Declining resolves the
-                // waiting `confirmPlaintext()` call with `false`, which
+                // whose endpoint is plaintext: a web endpoint over the
+                // unencrypted scheme, or an FTP session in its plain mode.
+                // The sentence under the question is chosen from the kind
+                // the tab carries (`PlaintextConfirmationBody`), so each
+                // protocol is pointed at its own encrypted form. Declining
+                // resolves the waiting confirmation call with `false`, which
                 // throws `RemoteFSError.connectionFailed` — the connect
                 // never happens (see that closure's own comment).
                 .confirmationDialog(
@@ -1064,10 +1068,9 @@ extension ContentView {
                         tab.resolvePlaintextConfirmation(confirmed: true)
                     }
                 } message: {
-                    Text(L10n.string(
-                        "transport.plaintext.body",
-                        "This connection uses http://, so the password travels in the clear. "
-                            + "Use https:// where the server offers it."))
+                    if let kind = tab.plaintextConfirmationKind {
+                        Text(PlaintextConfirmationBody.text(for: kind))
+                    }
                 }
             }
         }

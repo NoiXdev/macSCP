@@ -69,7 +69,7 @@ struct SessionTabTests {
     @Test func answeringTheConfirmationResumesItAndClearsThePendingFlag() async {
         let tab = makeTab()
 
-        async let answer = tab.confirmPlaintext()
+        async let answer = tab.confirmPlaintext(kind: .http)
         while tab.plaintextConfirmationPending == false { await Task.yield() }
         tab.resolvePlaintextConfirmation(confirmed: true)
 
@@ -79,13 +79,13 @@ struct SessionTabTests {
 
     /// A refusal is reported as `false`, and clears the pending flag exactly
     /// like an acceptance does. `ContentView`'s connector closure guards on
-    /// exactly this value (`guard await box.tab.confirmPlaintext() else {
-    /// throw … }`), so a `confirmPlaintext()` that came back `true` here
+    /// exactly this value (a guard on the awaited answer that throws when it is
+    /// false), so a confirmation that came back `true` here
     /// would let a refused connect through.
     @Test func refusingTheConfirmationReportsFalse() async {
         let tab = makeTab()
 
-        async let answer = tab.confirmPlaintext()
+        async let answer = tab.confirmPlaintext(kind: .http)
         while tab.plaintextConfirmationPending == false { await Task.yield() }
         tab.resolvePlaintextConfirmation(confirmed: false)
 
@@ -102,7 +102,7 @@ struct SessionTabTests {
     @Test func resolvingTwiceIsHarmless() async {
         let tab = makeTab()
 
-        async let answer = tab.confirmPlaintext()
+        async let answer = tab.confirmPlaintext(kind: .http)
         while tab.plaintextConfirmationPending == false { await Task.yield() }
         tab.resolvePlaintextConfirmation(confirmed: true)
         tab.resolvePlaintextConfirmation(confirmed: false)

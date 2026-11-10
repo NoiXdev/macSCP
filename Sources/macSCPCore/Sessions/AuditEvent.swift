@@ -80,9 +80,10 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// (see the P3e feasibility note in the design spec), so there is
         /// no honest way to log it.
         case snippetExecuted
-        /// The user confirmed connecting over an unencrypted (`http://`)
-        /// endpoint despite `PlaintextTransportGate.requiresConfirmation`
-        /// (M21/T10) — recorded once the connect succeeds, at the same spot
+        /// The user confirmed connecting over an unencrypted endpoint
+        /// (a web endpoint over the plain scheme, or a plain FTP session)
+        /// despite `PlaintextTransportGate.requiresConfirmation` (M21/T10) —
+        /// recorded once the connect succeeds, at the same spot
         /// `.connected` is recorded, so the audit trail shows exactly when a
         /// session ran with credentials in the clear.
         case plaintextConfirmed

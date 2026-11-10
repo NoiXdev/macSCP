@@ -318,8 +318,8 @@ extension ContentView {
                 // Reset first (see `pendingPlaintextConfirmation`'s own doc
                 // comment on why), then set only on an actual confirm.
                 await box.tab.resetPendingPlaintextConfirmation()
-                if PlaintextTransportGate.requiresConfirmation(for: config) {
-                    guard await box.tab.confirmPlaintext() else {
+                if let plaintextKind = PlaintextTransportGate.kind(for: config) {
+                    guard await box.tab.confirmPlaintext(kind: plaintextKind) else {
                         throw RemoteFSError.connectionFailed(
                             reason: "the user declined to send credentials over an unencrypted connection")
                     }

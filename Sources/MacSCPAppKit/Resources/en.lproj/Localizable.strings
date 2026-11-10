@@ -172,6 +172,7 @@
 /* Plaintext-transport confirmation (M21/T10, spec "Klartext-HTTP") */
 "transport.plaintext.title" = "Send credentials unencrypted?";
 "transport.plaintext.body" = "This connection uses http://, so the password travels in the clear. Use https:// where the server offers it.";
+"transport.plaintext.body.ftp" = "This connection uses plain FTP, so the password travels in the clear. Use FTPS where the server offers it.";
 
 /* Connection type switcher + S3 form section (M12/T7b) */
 "connection.type.label" = "Connection type";

@@ -259,14 +259,20 @@ final class SessionTab: Identifiable {
     let certificateBridge: CertificatePromptBridge
     /// Drives the "send credentials unencrypted?" confirmation for this
     /// tab's connect attempts (M21/T10): `true` while
-    /// `PlaintextTransportGate.requiresConfirmation` is true and the App is
+    /// `PlaintextTransportGate.kind(for:)` names a kind and the App is
     /// waiting for the user's answer. Same single-continuation shape as
     /// `CertificatePromptBridge` above, but plain properties on the tab
     /// itself rather than a separate bridge type: the dialog needs no
-    /// candidate payload (its text is the same for every plaintext
-    /// endpoint), so there is nothing a separate type would encapsulate that
-    /// isn't already just "is one pending, and how do I resolve it".
+    /// candidate payload beyond which sentence to show (see
+    /// `plaintextConfirmationKind`), so there is nothing a separate type
+    /// would encapsulate that isn't already just "is one pending, and how do
+    /// I resolve it".
     var plaintextConfirmationPending = false
+    /// Which kind of plaintext the pending confirmation is about, so the
+    /// dialog names the remedy the user's protocol has. Set together with
+    /// `plaintextConfirmationPending` and cleared with it; `nil` while no
+    /// confirmation is pending.
+    var plaintextConfirmationKind: PlaintextTransportGate.Kind?
     private var plaintextContinuation: CheckedContinuation<Bool, Never>?
     /// Set by the connector closure right before dispatching a connect whose
     /// transport is plaintext AND the user just confirmed the risk dialog;
@@ -788,12 +794,14 @@ final class SessionTab: Identifiable {
     /// presents the dialog and suspends until `resolvePlaintextConfirmation`
     /// answers it. Cancellation-safe, same shape as
     /// `CertificatePromptBridge.ask(_:)`.
-    func confirmPlaintext() async -> Bool {
+    func confirmPlaintext(kind: PlaintextTransportGate.Kind) async -> Bool {
+        plaintextConfirmationKind = kind
         plaintextConfirmationPending = true
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 if Task.isCancelled {
                     plaintextConfirmationPending = false
+                    plaintextConfirmationKind = nil
                     continuation.resume(returning: false)
                     return
                 }
@@ -811,6 +819,7 @@ final class SessionTab: Identifiable {
         guard let continuation = plaintextContinuation else { return }
         plaintextContinuation = nil
         plaintextConfirmationPending = false
+        plaintextConfirmationKind = nil
         continuation.resume(returning: confirmed)
     }
 

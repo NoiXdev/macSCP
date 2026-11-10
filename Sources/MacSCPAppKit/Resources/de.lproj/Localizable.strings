@@ -172,6 +172,7 @@
 /* Klartext-Transport-Bestätigung (M21/T10, Spec „Klartext-HTTP") */
 "transport.plaintext.title" = "Anmeldedaten unverschlüsselt senden?";
 "transport.plaintext.body" = "Diese Verbindung nutzt http://, das Passwort wird also im Klartext übertragen. Nutze https://, wenn der Server das anbietet.";
+"transport.plaintext.body.ftp" = "Diese Verbindung nutzt unverschlüsseltes FTP, das Passwort wird also im Klartext übertragen. Nutze FTPS, wenn der Server das anbietet.";
 
 /* Verbindungstyp-Umschalter + S3-Formularabschnitt (M12/T7b) */
 "connection.type.label" = "Verbindungstyp";
