@@ -222,12 +222,14 @@ struct BrowserPane: View {
     /// the sheet so the run and the sheet have the same lifetime.
     @State private var checksumBatch: ChecksumBatch?
     /// Set only when a symlink double-click's `navigate(to:)` call FAILS
-    /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
+    /// (M11h/T1 review fix — see `onOpenSymlink` below), or when the window
+    /// hands over a failed navigation of its own through
+    /// `windowNavigationFailure`: forwarded to
     /// `PathBar`, which reuses its existing failure overlay to show the
     /// result instead of a second, bespoke error surface. Stays `nil` on
     /// success, so `PathBar` is never touched, never enters its edit state,
     /// and never steals focus for the (usual, successful) round-trip.
-    @State private var symlinkNavigationFailure: SymlinkNavigationFailure?
+    @State private var symlinkNavigationFailure: PaneNavigationFailure?
     /// The extract dialog, from the moment the archive has been previewed
     /// until the user answers it. Internal (not `private`) because the
     /// archive entries live in `BrowserPane+Archive.swift`.
@@ -246,6 +248,15 @@ struct BrowserPane: View {
     /// How a remote action reaches the user's shell. `nil` on the local pane,
     /// which spawns and has no shell, and wherever a call site passes none.
     var shell: FileActionShell? = nil
+    /// A failed navigation of this pane that the WINDOW made, not the pane:
+    /// the remote pane's call site binds it to
+    /// `SessionTab.remoteNavigationFailure`, which the one navigation to the
+    /// bucket list in `ContentView.deliverPendingCreateBucket(on:)` sets. The
+    /// pane takes it (setting it back to `nil`) and shows it through the same
+    /// `PathBar` overlay a failed symlink double-click uses, so the two read
+    /// the same. Defaults to a binding that never holds one, which is what
+    /// the local pane gets.
+    var windowNavigationFailure: Binding<PaneNavigationFailure?> = .constant(nil)
     /// The one sentence an archive alert shows: a refusal, a listing that
     /// could not be read, or "another operation is still running".
     @State var archiveAlertMessage: String?
@@ -266,6 +277,14 @@ struct BrowserPane: View {
                     caseSensitive: side == .remote,
                     fileSystem: fileSystem,
                     externalNavigationFailure: $symlinkNavigationFailure)
+                // `initial: true`: the failure can be set while this pane is
+                // not mounted (the Files half hidden), and is then shown when
+                // it appears rather than never.
+                .onChange(of: windowNavigationFailure.wrappedValue, initial: true) { _, failure in
+                    guard let failure else { return }
+                    windowNavigationFailure.wrappedValue = nil
+                    symlinkNavigationFailure = failure
+                }
 
                 Button {
                     Task { await viewModel.goUp() }
@@ -365,7 +384,7 @@ struct BrowserPane: View {
                             // exactly like a failed typed path.
                             let message = await viewModel.navigate(to: item.path)
                             if let message {
-                                symlinkNavigationFailure = SymlinkNavigationFailure(
+                                symlinkNavigationFailure = PaneNavigationFailure(
                                     path: item.path, message: message)
                             }
                         }

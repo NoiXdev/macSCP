@@ -22,12 +22,20 @@ import macSCPCore
 /// `side`; passing the file system value itself removes the closure
 /// indirection). Wired at the `BrowserPane` call site in `ContentView`.
 
-/// A symlink double-click that failed to navigate (M11h/T1 review fix): the
-/// symlink's own path that was attempted, and the message `navigate(to:)`
-/// returned. A successful follow never produces one of these — see
-/// `BrowserPane.onOpenSymlink`, which navigates directly and only reports
-/// back here on failure.
-struct SymlinkNavigationFailure: Equatable {
+/// A navigation that failed somewhere other than this field: the path that
+/// was attempted, and the message `navigate(to:)` returned. Two producers:
+/// a symlink double-click (M11h/T1 review fix; `BrowserPane.onOpenSymlink`,
+/// which navigates directly and only reports back here on failure), and the
+/// one navigation to the bucket list that
+/// `ContentView.deliverPendingCreateBucket(on:)` makes for a carried-over
+/// create-bucket request (`SessionTab.remoteNavigationFailure`, which the
+/// remote `BrowserPane` forwards here). A successful navigation never
+/// produces one of these.
+///
+/// Named `SymlinkNavigationFailure` until the second producer was added
+/// (final whole-branch review of the user-visible-bugs branch, I1); the
+/// type itself is unchanged.
+struct PaneNavigationFailure: Equatable {
     let path: String
     let message: String
 }
@@ -42,7 +50,10 @@ struct PathBar: View {
     /// type's doc comment above for why this is injected rather than pulled
     /// off `viewModel`.
     let fileSystem: any RemoteFileSystem
-    /// Reports a FAILED symlink follow that happened elsewhere (M11h/T1
+    /// Reports a FAILED navigation that happened elsewhere -- a symlink
+    /// follow, or the window's navigation to the bucket list (see
+    /// `PaneNavigationFailure`); what follows describes the first, and the
+    /// second is shown the same way (M11h/T1
     /// review fix): a symlink double-click in the file list now navigates
     /// DIRECTLY (`BrowserPane.onOpenSymlink`), bypassing this field entirely
     /// on success — nothing here ever runs for the success case, so the
@@ -58,7 +69,7 @@ struct PathBar: View {
     /// binding, so the existing call site (both panes go through the same
     /// `PathBar`) keeps compiling unchanged unless `BrowserPane` explicitly
     /// wires it.
-    var externalNavigationFailure: Binding<SymlinkNavigationFailure?> = .constant(nil)
+    var externalNavigationFailure: Binding<PaneNavigationFailure?> = .constant(nil)
 
     /// What is shown in the inline overlay anchored under the field:
     /// nothing, the Tab-completion candidates (second consecutive Tab), or
@@ -230,7 +241,8 @@ struct PathBar: View {
             // binding's value wouldn't otherwise change.
             externalNavigationFailure.wrappedValue = nil
             // `navigate(to:)` already ran, and already failed, in
-            // `BrowserPane` — this only DISPLAYS that result, it does not
+            // `BrowserPane` or in the window (`PaneNavigationFailure` names
+            // both) — this only DISPLAYS that result, it does not
             // call `navigate(to:)` again. Otherwise the same as opening the
             // field on a typed path that just failed: edit state, the
             // attempted path as the draft, message in the error overlay.

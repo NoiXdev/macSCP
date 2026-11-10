@@ -656,14 +656,48 @@ final class SessionTab: Identifiable {
     /// - `ContentView.deliverPendingCreateBucket(on:)` clears it -- before the
     ///   hand-off, so a repeated observation cannot open a second sheet, and
     ///   on every outcome that is not a hand-off (no session, another
-    ///   session, a bucket list that failed to load).
+    ///   session, a bucket list that failed to load, a pane that is still not
+    ///   at the bucket list after the one navigation the delivery makes). It
+    ///   also records that navigation on the request
+    ///   (`bucketListNavigation`), and the navigation's own task moves it on
+    ///   or clears the request when the navigation failed.
     /// - `TabTeardown.run(_:reason:)` clears it, because every route into the
     ///   teardown is leaving this connection on purpose.
     var pendingCreateBucket: PendingCreateBucket?
 
     struct PendingCreateBucket: Equatable {
         let storedSessionID: UUID
+        /// The one navigation of the remote pane to the bucket list that the
+        /// delivery makes for a request whose tab is standing inside a bucket
+        /// -- the case "Go to Existing Tab" produces, since the existing tab
+        /// can be anywhere (final whole-branch review, I1). Recorded on the
+        /// request so that it is made at most once: every later call of the
+        /// delivery reads it here.
+        var bucketListNavigation: BucketListNavigation = .notMade
+
+        enum BucketListNavigation: Equatable {
+            /// The delivery has not navigated the pane for this request.
+            case notMade
+            /// The navigation has been started and has not returned. The
+            /// delivery waits; the navigation's task moves this on.
+            case inFlight
+            /// The navigation returned without a failure. What the pane shows
+            /// now decides: the bucket list hands over, anything else drops.
+            case made
+        }
     }
+
+    /// A failed navigation of this tab's remote pane that the window made,
+    /// waiting for the pane to show it -- set only by the navigation
+    /// `ContentView.deliverPendingCreateBucket(on:)` makes to the bucket list,
+    /// when `RemoteBrowserViewModel.navigate(to:)` returns a message. The
+    /// remote `BrowserPane` takes it (and sets it back to `nil`) and hands it
+    /// to its `PathBar`, which shows it the way it shows a failed typed path
+    /// or a failed symlink double-click: the field open on the attempted path,
+    /// the message under it. On the tab rather than in a view's `@State`,
+    /// because the window, not the pane, made the navigation.
+    /// `TabTeardown.run(_:reason:)` clears it with the request it belongs to.
+    var remoteNavigationFailure: PaneNavigationFailure?
 
     /// "Connected or not": the connected name, or "New Connection". The
     /// tab strip and the window title no longer read this — they draw

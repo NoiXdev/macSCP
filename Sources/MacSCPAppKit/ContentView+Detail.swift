@@ -663,7 +663,16 @@ extension ContentView {
                                         refusedInput: {
                                             session.terminal.inputRefused
                                                 && session.terminal.state == .opening
-                                        })
+                                        }),
+                                    // The window's own navigation of this
+                                    // pane, to the bucket list for a
+                                    // carried-over create-bucket request:
+                                    // its failure is shown by this pane's
+                                    // path bar (`deliverPendingCreateBucket
+                                    // (on:)`).
+                                    windowNavigationFailure: Binding(
+                                        get: { tab.remoteNavigationFailure },
+                                        set: { tab.remoteNavigationFailure = $0 })
                                 )
                                 .frame(minWidth: BrowserPane.minimumWidth)
                             }
@@ -3304,7 +3313,8 @@ struct PendingSnippetRunner: View {
 
 /// Hands the create-bucket sheet to the route once the tab the connection
 /// manager's "Connect and Create Bucket…" armed is connected, in front, and
-/// showing a bucket list that has loaded -- a tab that entry opened, or a tab
+/// showing a bucket list that has loaded (navigating the pane there once when
+/// it stands inside a bucket) -- a tab that entry opened, or a tab
 /// that was already connected and that "Go to Existing Tab" carried the
 /// request over to (S3 metadata plan, Task 6) --
 /// mounted per tab in `ContentView.splitLayout`'s `.background`, for every
@@ -3324,7 +3334,9 @@ struct PendingSnippetRunner: View {
 /// have its first transition missed, and there is no later change to fall
 /// back on when the list is already up. `remoteState` is the fact this one
 /// adds to the snippet runner's: the pane loads when it appears, so the list
-/// becoming `.loaded` is a change nothing else announces.
+/// becoming `.loaded` is a change nothing else announces. `remotePath` and
+/// `bucketListNavigation` are the two the bucket-list navigation adds (final
+/// whole-branch review, I1).
 struct PendingCreateBucketRunner: View {
     let tab: SessionTab
     /// Which tab is on screen. Part of the signal because the hand-off
@@ -3366,8 +3378,17 @@ struct PendingCreateBucketRunner: View {
         /// Existing Tab" carries a request over to, has no connect, no tab
         /// switch and no load coming: this is the only fact that changes.
         let armed: Bool
+        /// The delivery's one navigation to the bucket list: its task moving
+        /// it from in flight to made is a wake-up of its own, and it can come
+        /// after the listing it produced has already been observed.
+        let bucketListNavigation: SessionTab.PendingCreateBucket.BucketListNavigation?
         let sessionID: UUID?
         let remoteState: RemoteBrowserViewModel.State?
+        /// Where the pane is. The delivery asks whether the route offers the
+        /// action HERE (the bucket list, not a bucket in it), and a
+        /// navigation's `.loading`-then-`.loaded` can be seen as no change of
+        /// `remoteState` at all.
+        let remotePath: String?
         let isReconnecting: Bool
         let storedSessionID: UUID?
         let activeTabID: UUID
@@ -3376,8 +3397,10 @@ struct PendingCreateBucketRunner: View {
     private var signal: Signal {
         Signal(
             armed: tab.pendingCreateBucket != nil,
+            bucketListNavigation: tab.pendingCreateBucket?.bucketListNavigation,
             sessionID: tab.session?.id,
             remoteState: tab.session?.remote.state,
+            remotePath: tab.session?.remote.currentPath,
             isReconnecting: tab.isReconnecting,
             storedSessionID: tab.activeStoredSessionID,
             activeTabID: activeTabID)

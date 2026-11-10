@@ -1860,12 +1860,15 @@ struct ContentView: View {
         /// Nothing was armed on the tab.
         case notArmed
         /// Armed, and a fact it needs is not there yet: the dial has not
-        /// finished, the tab is not in front, or the bucket list has not
-        /// loaded. Stays armed; the runner calls again when one changes.
+        /// finished, the tab is not in front, the pane's listing has not
+        /// loaded, or the pane's navigation to the bucket list -- started by
+        /// this call or an earlier one -- has not returned. Stays armed; the
+        /// runner calls again when one changes.
         case waiting
         /// Armed, and it can never be carried out: the dial failed, the tab
-        /// is on another stored connection, or the bucket list failed to
-        /// load. Cleared.
+        /// is on another stored connection, the pane's listing failed to
+        /// load, or the pane is still not at the bucket list after the one
+        /// navigation there. Cleared.
         case dropped
         /// Cleared and handed to `openCreateContainerSheet(in:session:)`,
         /// which is where the route decides whether the sheet opens.
@@ -1895,14 +1898,37 @@ struct ContentView: View {
     /// - the tab is the one in front: the sheet is the window's, and
     ///   presenting it over another tab's pane would offer to create a bucket
     ///   in a connection the user is not looking at;
-    /// - the remote pane's listing has LOADED. The sheet is handed a
-    ///   snapshot of that listing to check proposed names against
-    ///   (`CreateBucketModel.listing(of:)`), and a snapshot taken while the
-    ///   pane is still loading is one that says "the list has not been
-    ///   loaded" for as long as the sheet is open. Nothing in `connect`
+    /// - the remote pane's listing has LOADED, and it is the BUCKET LIST. The
+    ///   sheet is handed a snapshot of that listing to check proposed names
+    ///   against (`CreateBucketModel.listing(of:)`), and a snapshot taken
+    ///   while the pane is still loading is one that says "the list has not
+    ///   been loaded" for as long as the sheet is open. Nothing in `connect`
     ///   waits for it: the pane loads when it appears. A listing that FAILED
     ///   drops the request -- the pane says why, and the toolbar's menu is
     ///   still there.
+    ///
+    /// **"Loaded" is not "the bucket list is loaded"** (final whole-branch
+    /// review, I1; before it the third condition read, verbatim, "the remote
+    /// pane's listing has LOADED.", and the code checked only that). A tab
+    /// this entry connected stands at the root, but one
+    /// that "Go to Existing Tab" carried the request over to can be standing
+    /// inside a bucket, where the route declines without a word. So on a
+    /// loaded listing this asks the route's own rule whether it would offer
+    /// `.createBucket` in the tab's CURRENT context
+    /// (`ConnectionActionRoute.isAvailable(in:)` over
+    /// `connectionActionContext(in:session:)`) -- asked, not restated, so the
+    /// rule is still spelled once. When it would not, and the connection's
+    /// root is a list of buckets, the pane is navigated to that list once,
+    /// through `RemoteBrowserViewModel.navigate(to:)`, the call the path bar
+    /// makes for a typed path; the request records it
+    /// (`PendingCreateBucket.bucketListNavigation`) and stays armed. When
+    /// the list has loaded and the action is offered, the hand-off is the
+    /// usual one. When the navigation returns a failure, the request is
+    /// dropped and the failure is shown by the remote pane's path bar, the
+    /// way a failed typed path is (`SessionTab.remoteNavigationFailure`).
+    /// When the action is still not offered after the navigation -- the user
+    /// went elsewhere meanwhile, or the root is not a list of buckets at all
+    /// -- the request is dropped; it is never navigated a second time.
     ///
     /// **Nothing here is timed.** Every condition is a published fact of the
     /// tab or its pane; there is no sleep, no deadline and no retry count.
@@ -1926,6 +1952,7 @@ struct ContentView: View {
             return .dropped
         }
         guard tabsModel.activeTab.id == tab.id else { return .waiting }
+        guard pending.bucketListNavigation != .inFlight else { return .waiting }
         switch session.remote.state {
         case .loading:
             return .waiting
@@ -1935,9 +1962,53 @@ struct ContentView: View {
         case .loaded:
             break
         }
+        let context = connectionActionContext(in: tab, session: session)
+        guard ConnectionActionRoute.createBucket.isAvailable(in: context) else {
+            guard pending.bucketListNavigation == .notMade, context.rootIsContainerList else {
+                tab.pendingCreateBucket = nil
+                return .dropped
+            }
+            navigateToBucketList(on: tab, session: session, for: pending)
+            return .waiting
+        }
         tab.pendingCreateBucket = nil
         openCreateContainerSheet(in: tab, session: session)
         return .handedToTheRoute
+    }
+
+    /// The one navigation `deliverPendingCreateBucket(on:)` makes: the remote
+    /// pane to the bucket list, which is the root `/` of a connection whose
+    /// root lists buckets (`ConnectionActionContext.bucket` reads no bucket
+    /// there, and nowhere else). Recorded on the request as `.inFlight`
+    /// before it starts, so no later call starts a second one, and moved on
+    /// by its own task when `navigate(to:)` returns: to `.made`, which wakes
+    /// the runner to decide on what the pane now shows, or -- on a failure --
+    /// the request is dropped and the message is left for the remote pane's
+    /// path bar (`SessionTab.remoteNavigationFailure`).
+    ///
+    /// The task touches the request only while it is still the one this
+    /// navigation was made for, on the same session: a teardown, a hand-off
+    /// or a new request in the meantime owns it now.
+    private func navigateToBucketList(
+        on tab: SessionTab, session: BrowserSession, for pending: SessionTab.PendingCreateBucket
+    ) {
+        var inFlight = pending
+        inFlight.bucketListNavigation = .inFlight
+        tab.pendingCreateBucket = inFlight
+        let bucketList = "/"
+        Task { @MainActor in
+            let failure = await session.remote.navigate(to: bucketList)
+            guard tab.pendingCreateBucket == inFlight, tab.session?.id == session.id else { return }
+            if let failure {
+                tab.pendingCreateBucket = nil
+                tab.remoteNavigationFailure = PaneNavigationFailure(
+                    path: bucketList, message: failure)
+                return
+            }
+            var made = inFlight
+            made.bucketListNavigation = .made
+            tab.pendingCreateBucket = made
+        }
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
@@ -2674,7 +2745,8 @@ struct ContentView: View {
     /// Not armed when the tab is already dialling: whatever that attempt
     /// produces is somebody else's, and a request left behind would wait for
     /// it. The delivery owns every later decision (`deliverPendingCreateBucket
-    /// (on:)` waits, drops or hands over), so this makes none of them.
+    /// (on:)` waits, navigates the pane to the bucket list once, drops or
+    /// hands over), so this makes none of them.
     func armPendingCreateBucket(on tab: SessionTab, storedSessionID: UUID) {
         guard !tab.isReconnecting else { return }
         tab.pendingCreateBucket = SessionTab.PendingCreateBucket(
@@ -2701,9 +2773,18 @@ struct ContentView: View {
     /// **The create-bucket request is armed on the existing tab, through the
     /// same `armPendingCreateBucket(on:storedSessionID:)` a start uses, and
     /// the delivery that already exists does the rest.** That delivery waits
-    /// for exactly what this answer produces -- a session, the request's
-    /// stored connection, the tab in front, a loaded bucket list -- and
-    /// `PendingCreateBucketRunner` wakes on the request being armed as well
+    /// for what this answer produces -- a session, the request's stored
+    /// connection, the tab in front, a loaded listing -- and, because the
+    /// existing tab can be standing inside a bucket, where the route offers
+    /// no sheet, it navigates the pane to the bucket list once and hands over
+    /// when that list has loaded (`deliverPendingCreateBucket(on:)` says what
+    /// happens when it cannot). Corrected 2026-11-10 (final whole-branch
+    /// review, I1); the sentence read, verbatim, "That delivery waits for
+    /// exactly what this answer produces -- a session, the request's stored
+    /// connection, the tab in front, a loaded bucket list --", which took a
+    /// loaded listing for a loaded bucket list: a tab inside a bucket had its
+    /// request dropped without a word. `PendingCreateBucketRunner` wakes on
+    /// the request being armed as well
     /// as on the tab changing, so a tab that is already connected, in front
     /// and showing its list (no connect event is coming for it) is delivered
     /// to as well. A tab that is not found (closed while the question was up)

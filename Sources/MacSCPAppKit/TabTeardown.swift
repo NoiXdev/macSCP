@@ -135,6 +135,11 @@ enum TabTeardown {
         tab.tearDownsInFlight += 1
         defer { tab.tearDownsInFlight -= 1 }
         tab.editErrorMessage = nil
+        // A failed bucket-list navigation the request below made and the
+        // remote pane has not shown yet: it names the connection this
+        // function is taking down, and shown after a reconnect it would be
+        // about a listing the new connection never attempted.
+        tab.remoteNavigationFailure = nil
         // The create-bucket request (S3 metadata plan, Task 6), dropped FIRST
         // and outside the `if let session` below, for the two reasons the
         // snippet's clear (further down) gives for its position, which are

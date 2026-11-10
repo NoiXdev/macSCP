@@ -1902,6 +1902,154 @@ struct SidebarNewBucketTests {
         #expect(tab.pendingCreateBucket == nil)
     }
 
+    /// Steps into the first bucket of a connected holder's pane, the way a
+    /// double-click on its row does, so the pane stands inside a bucket.
+    private func standInsideTheFirstBucket(_ session: BrowserSession) async throws {
+        let bucket = try #require(session.remote.items.first { $0.path == "/first-bucket" })
+        await session.remote.open(bucket)
+        #expect(session.remote.currentPath == "/first-bucket", "the control: the pane is inside a bucket")
+        #expect(session.remote.state == .loaded, "the control: the bucket's own listing loaded")
+    }
+
+    /// Final whole-branch review, I1: "Go to Existing Tab" onto a tab that is
+    /// browsing INSIDE a bucket. The route offers the sheet only at the list,
+    /// so a hand-off made there was a request dropped without a word. The
+    /// delivery navigates the pane to the bucket list once, waits for that
+    /// listing, and only then hands over.
+    @Test func aTabStandingInsideABucketIsNavigatedToTheListAndThenHandedOver() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-inside")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let fs = BucketListFileSystem()
+        let (tab, _) = installControlledTab(in: view, dialing: fs)
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let session = try #require(tab.session)
+        try await standInsideTheFirstBucket(session)
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting, """
+            the delivery handed over a request on a pane standing inside a bucket, where the \
+            route declines without a word
+            """)
+        #expect(tab.pendingCreateBucket != nil, "a request that is waiting must stay armed")
+        try await pollUntil("the navigation to the bucket list to return") {
+            tab.pendingCreateBucket?.bucketListNavigation == .made
+        }
+        #expect(fs.rootStatCount == 1, "the pane was not navigated to the bucket list exactly once")
+        #expect(session.remote.currentPath == "/", "the pane is not at the bucket list")
+        #expect(session.remote.state == .loaded)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+        #expect(tab.pendingCreateBucket == nil)
+        #expect(tab.remoteNavigationFailure == nil, "a navigation that worked left a failure behind")
+    }
+
+    /// The navigation is in flight and the pane is still inside the bucket:
+    /// every call of the delivery in that window waits -- it neither hands
+    /// over (the route would decline) nor drops (the navigation has not
+    /// answered) -- and none of them starts a second navigation.
+    @Test func theDeliveryDoesNotHandOverWhileThePaneIsStillInsideTheBucket() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-in-flight")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let fs = BucketListFileSystem(holdsRootStat: true)
+        let (tab, _) = installControlledTab(in: view, dialing: fs)
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let session = try #require(tab.session)
+        try await standInsideTheFirstBucket(session)
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        _ = await fs.rootStatEntered.wait()
+
+        // Held at the navigation's first step: the pane has not moved.
+        #expect(session.remote.currentPath == "/first-bucket", "the control: the pane is still inside the bucket")
+        #expect(session.remote.state == .loaded, "the control: the pane is not loading")
+        #expect(tab.pendingCreateBucket?.bucketListNavigation == .inFlight)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting, """
+            the delivery did not wait for its own navigation while the pane was still inside the bucket
+            """)
+        #expect(tab.pendingCreateBucket != nil, "the request was dropped while its navigation was in flight")
+        #expect(fs.rootStatCount == 1, "a second call started a second navigation")
+
+        fs.rootStatRelease.signal()
+        try await pollUntil("the navigation to the bucket list to return") {
+            tab.pendingCreateBucket?.bucketListNavigation == .made
+        }
+        #expect(session.remote.currentPath == "/")
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+    }
+
+    /// The navigation was made and the pane is not at the list (the user went
+    /// back into a bucket before the runner looked): the request is dropped,
+    /// and the pane is not navigated a second time.
+    @Test func aSecondCallAfterTheNavigationDoesNotNavigateAgain() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-once")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let fs = BucketListFileSystem()
+        let (tab, _) = installControlledTab(in: view, dialing: fs)
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let session = try #require(tab.session)
+        try await standInsideTheFirstBucket(session)
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        try await pollUntil("the navigation to the bucket list to return") {
+            tab.pendingCreateBucket?.bucketListNavigation == .made
+        }
+        #expect(fs.rootStatCount == 1, "the control: the first navigation was made")
+        try await standInsideTheFirstBucket(session)
+
+        #expect(view.deliverPendingCreateBucket(on: tab) == .dropped)
+        #expect(tab.pendingCreateBucket == nil)
+        #expect(fs.rootStatCount == 1, "the delivery navigated the pane a second time")
+        #expect(session.remote.currentPath == "/first-bucket", "the pane was moved again")
+    }
+
+    /// The navigation to the bucket list fails: the request is dropped, and the
+    /// failure is left for the remote pane's path bar, which shows it the way
+    /// it shows a failed typed path -- the attempted path and the message.
+    /// `navigate(to:)` rolls the pane back, so it is still inside the bucket.
+    @Test func aFailedNavigationToTheBucketListDropsTheRequestAndLeavesItsFailureForThePathBar()
+        async throws
+    {
+        let workDir = makeTempDirectory("new-bucket-jump-nav-fails")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let fs = BucketListFileSystem()
+        let (tab, _) = installControlledTab(in: view, dialing: fs)
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let session = try #require(tab.session)
+        try await standInsideTheFirstBucket(session)
+        fs.refuseTheRootListFromNowOn()
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        try await pollUntil("the navigation's failure to drop the request") {
+            tab.pendingCreateBucket == nil
+        }
+
+        #expect(fs.rootStatCount == 1, "the control: the navigation was made")
+        let failure = try #require(tab.remoteNavigationFailure, "the failed navigation was not surfaced")
+        #expect(failure.path == "/")
+        #expect(!failure.message.isEmpty)
+        #expect(session.remote.currentPath == "/first-bucket", "the failed navigation did not roll back")
+        #expect(view.deliverPendingCreateBucket(on: tab) == .notArmed)
+    }
+
     /// The tab is dialling again by the time the answer is given (a reconnect
     /// began while the question was up): the answer arms nothing, by the same
     /// rule a start applies to a target that is already dialling -- the attempt
@@ -2257,6 +2405,7 @@ struct SidebarNewBucketTests {
         for fact in [
             "tab.pendingCreateBucket", "tab.session?.remote.state", "tab.session?.id",
             "tab.isReconnecting", "tab.activeStoredSessionID", "activeTabID: activeTabID",
+            "tab.pendingCreateBucket?.bucketListNavigation", "tab.session?.remote.currentPath",
         ] {
             #expect(runner.contains(fact), "the runner's signal no longer carries `\(fact)`")
         }
@@ -2466,27 +2615,54 @@ private final class BucketListFileSystem: RemoteFileSystem, S3BucketSettings, Se
     private let closed = Mutex(0)
     private let holdsDisconnect: Bool
     private let listFails: Bool
+    private let holdsRootStat: Bool
+    private let rootStats = Mutex(0)
+    private let rootListRefused = Mutex(false)
     /// Raised when `disconnect()` is entered; only meaningful when it holds.
     let disconnectEntered = AsyncSignal()
     /// Releases a held `disconnect()`.
     let disconnectRelease = AsyncSignal()
+    /// Raised when `stat("/")` is entered; only meaningful when it holds.
+    let rootStatEntered = AsyncSignal()
+    /// Releases a held `stat("/")`.
+    let rootStatRelease = AsyncSignal()
 
     /// `holdsDisconnect` parks `disconnect()` until the test releases it, so a
     /// test can stand between the start of a teardown and its end without a
     /// clock.
     ///
     /// `listFails` makes the bucket list itself fail to load.
-    init(holdsDisconnect: Bool = false, listFails: Bool = false) {
+    ///
+    /// `holdsRootStat` parks `stat("/")` -- the first thing
+    /// `RemoteBrowserViewModel.navigate(to:)` does, before it moves the pane
+    /// -- so a test can stand inside a bucket while a navigation to the list
+    /// is in flight.
+    init(holdsDisconnect: Bool = false, listFails: Bool = false, holdsRootStat: Bool = false) {
         self.holdsDisconnect = holdsDisconnect
         self.listFails = listFails
+        self.holdsRootStat = holdsRootStat
     }
 
     var disconnects: Int { closed.withLock { $0 } }
+
+    /// How many times `stat("/")` was asked: one per navigation to the
+    /// bucket list, since `navigate(to:)` stats its target once and nothing
+    /// else in these tests stats the root.
+    var rootStatCount: Int { rootStats.withLock { $0 } }
+
+    /// From now on the bucket list (`/`) fails to load, while a bucket's own
+    /// listing still loads: the list loaded once, and a later navigation back
+    /// to it fails.
+    func refuseTheRootListFromNowOn() { rootListRefused.withLock { $0 = true } }
 
     nonisolated var rootIsContainerList: Bool { true }
 
     func list(path: String) async throws -> [RemoteFileItem] {
         if listFails { throw RemoteFSError.protocolError(reason: "list refused") }
+        guard RemotePath.normalizedAbsolute(path) == "/" else { return [] }
+        if rootListRefused.withLock({ $0 }) {
+            throw RemoteFSError.protocolError(reason: "bucket list refused")
+        }
         return [
             RemoteFileItem(name: "first-bucket", path: "/first-bucket", kind: .directory, isBucket: true),
             RemoteFileItem(name: "second-bucket", path: "/second-bucket", kind: .directory, isBucket: true),
@@ -2501,7 +2677,18 @@ private final class BucketListFileSystem: RemoteFileSystem, S3BucketSettings, Se
         _ = await disconnectRelease.wait()
     }
 
-    func stat(path: String) async throws -> RemoteFileItem { fatalError("not exercised by this test") }
+    /// Only the root is ever stated here, by the delivery's navigation to the
+    /// bucket list; it answers the way `S3FileSystem` does, with a directory
+    /// and no request.
+    func stat(path: String) async throws -> RemoteFileItem {
+        guard RemotePath.normalizedAbsolute(path) == "/" else { fatalError("not exercised by this test") }
+        rootStats.withLock { $0 += 1 }
+        if holdsRootStat {
+            rootStatEntered.signal()
+            _ = await rootStatRelease.wait()
+        }
+        return RemoteFileItem(name: "/", path: "/", kind: .directory)
+    }
     func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
         fatalError("not exercised by this test")
     }
