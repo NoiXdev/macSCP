@@ -1163,9 +1163,10 @@ extension ContentView {
                         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
                         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
                         // Input the opening buffer could not hold was
-                        // refused whole (`TerminalPanelViewModel.send`); the
-                        // flag clears when the shell runs or the attempt
-                        // ends, so this is the opening state's own message.
+                        // refused whole (`TerminalPanelViewModel.send`). The
+                        // notice stays after the shell is running, until the
+                        // next send it takes or the attempt ends, so it is
+                        // not only the opening state's message.
                         .overlay(alignment: .bottom) {
                             inputRefusedNotice(session.terminal, theme: theme)
                         }
@@ -1204,7 +1205,9 @@ extension ContentView {
 
     /// The sentence the terminal panel shows while `inputRefused` holds:
     /// input was refused whole because the opening buffer could not hold it.
-    /// Nothing at all otherwise.
+    /// Nothing at all otherwise. It is worded in the past tense because it
+    /// holds on after the shell has come up: the view model clears it at the
+    /// first send the running shell takes, not at `.running`.
     ///
     /// A function of its own, outside the `case .running, .opening:` text
     /// `TerminalPanelInsetTests` scans, because it is a banner and pads
@@ -1219,7 +1222,7 @@ extension ContentView {
         if terminal.inputRefused {
             Text(L10n.string(
                 "terminal.inputRefused",
-                "Some input was not sent: the terminal is still opening."))
+                "Some input was not sent while the terminal was opening."))
                 .font(.system(size: 12))
                 .foregroundStyle(theme.foreground.swiftUIColor)
                 .padding(.horizontal, 12)

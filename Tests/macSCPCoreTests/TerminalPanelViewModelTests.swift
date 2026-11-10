@@ -1235,7 +1235,11 @@ struct TerminalPanelViewModelDeliveryTests {
         #expect(delivered.count == 1)
     }
 
-    @Test func theRefusalClearsWhenTheShellRuns() async throws {
+    /// The notice is the refusal's only signal, so it must still be there
+    /// once the shell is up -- including after the shell's start has
+    /// flushed the bytes accepted before the refusal, which is a send to the
+    /// running shell too but not one the user made.
+    @Test func theRefusalSurvivesTheShellComingUp() async throws {
         let shell = MockShell()
         let gate = OpenGate()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in
@@ -1243,16 +1247,71 @@ struct TerminalPanelViewModelDeliveryTests {
             return shell
         })
         vm.openIfNeeded()
-        let accepted = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
-        #expect(accepted == false)
+        let held = Box()
+        let first = vm.send([UInt8](repeating: 1, count: 60_000)) { held.bump() }
+        let second = vm.send([UInt8](repeating: 2, count: 10_000))
+        let results = [first, second]
+        #expect(results == [true, false])
         #expect(vm.inputRefused)
 
         gate.open()
         try await pollUntil("the shell is running") { vm.state == .running }
+        await held.waitForFirstDelivery()
+        // The held prefix reached the shell, and the notice outlived it.
+        let sentCount = shell.sent.flatMap { $0 }.count
+        #expect(sentCount == 60_000)
+        #expect(vm.inputRefused)
+    }
+
+    /// The latch binds only the opening attempt: a running shell takes every
+    /// send, however large and whatever the flag says, and the first one it
+    /// takes clears the notice.
+    @Test func theFirstSendTheRunningShellTakesClearsTheRefusalAndIsDelivered() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        let refused = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        #expect(refused == false)
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.inputRefused)
+
+        let delivered = Box()
+        // Larger than the opening buffer on purpose: not a cap that applies
+        // to a running shell.
+        let accepted = vm.send([UInt8](repeating: 3, count: 64 * 1024 + 1)) { delivered.bump() }
+        #expect(accepted)
         #expect(vm.inputRefused == false)
-        // Nothing was held, so nothing is flushed.
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(shell.sent.isEmpty)
+        await delivered.waitForFirstDelivery()
+        let sentCount = shell.sent.flatMap { $0 }.count
+        #expect(sentCount == 64 * 1024 + 1)
+        #expect(delivered.count == 1)
+    }
+
+    /// The notice that outlived the shell's start still ends with the
+    /// attempt it describes: when the shell ends, it goes.
+    @Test func aRefusalThatOutlivedTheShellsStartEndsWithTheShell() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.inputRefused)
+
+        shell.continuation.finish()
+        try await pollUntil("the shell ended") {
+            if case .ended = vm.state { return true } else { return false }
+        }
+        #expect(vm.inputRefused == false)
     }
 
     @Test func theRefusalClearsWhenTheOpenFailsAndStaysClearOnTheNextAttempt() async throws {

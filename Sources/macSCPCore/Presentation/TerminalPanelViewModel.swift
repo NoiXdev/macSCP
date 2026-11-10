@@ -72,11 +72,20 @@ public final class TerminalPanelViewModel {
     /// queued and is delivered: it is a whole prefix, with nothing missing
     /// in front of it.
     ///
-    /// Belongs to the same open attempt as `pendingBytes` and is reset at
-    /// the same points: when an open starts, when one fails, when the shell
-    /// ends, and on `shutdown()` (all through `discardPendingInput()`), and
-    /// also when the shell runs. From then on a send is no longer held at
-    /// all, and a sentence about an opening terminal would be stale.
+    /// The latch and the notice have different lifetimes, on purpose. The
+    /// latch is enforced only while the attempt is opening (the shell-less
+    /// branch of `send`): a send to a running shell is never refused, set or
+    /// not. The notice outlives the shell coming up -- `state = .running`
+    /// does not clear it -- because it is the refusal's only signal, and it
+    /// must not disappear before anyone has read it, with the next command
+    /// typed landing without the refused text. It is cleared by the first
+    /// `send` the RUNNING shell takes (the user's next input, after the
+    /// notice has been on screen), which is not the flush of the held bytes
+    /// the shell's start makes: that one is the refusal's own prefix.
+    ///
+    /// It is cleared as well at every end of the attempt it describes: when
+    /// an open starts, when one fails, when the shell ends, and on
+    /// `shutdown()` (all through `discardPendingInput()`).
     public private(set) var inputRefused = false
 
     /// Delivery callbacks belonging to the bytes in `pendingBytes`, kept
@@ -197,7 +206,6 @@ public final class TerminalPanelViewModel {
                 }
                 self.shell = shell
                 state = .running
-                inputRefused = false
                 // Before the bytes, not beside them: `flushPendingBytes()`
                 // can start a full-screen program (a menu snippet buffered
                 // by `ContentView.sendSnippet`, which opens the panel and
@@ -290,12 +298,15 @@ public final class TerminalPanelViewModel {
     /// clear the bytes and leave a callback behind that would then report a
     /// delivery which never happened.
     ///
-    /// Also forgets `inputRefused`: the refusal describes the attempt whose
-    /// buffer this was, and every drop path here is the end of that attempt.
-    private func discardPendingInput() {
+    /// Also forgets `inputRefused`, except for the flush of a started shell
+    /// (`keepingRefusal`): the refusal describes the attempt whose buffer
+    /// this was, and every lifecycle drop path is the end of that attempt,
+    /// while the flush only spends the buffer and leaves the notice on screen
+    /// (see `inputRefused`).
+    private func discardPendingInput(keepingRefusal: Bool = false) {
         pendingBytes = []
         pendingDeliveries = []
-        inputRefused = false
+        if !keepingRefusal { inputRefused = false }
     }
 
     /// Forgets both geometries, because the shell they describe is starting,
@@ -422,11 +433,12 @@ public final class TerminalPanelViewModel {
         guard !pendingBytes.isEmpty else { return }
         let buffered = pendingBytes
         let deliveries = pendingDeliveries
-        discardPendingInput()
+        discardPendingInput(keepingRefusal: true)
+        guard let shell else { return }
         if deliveries.isEmpty {
-            send(buffered)
+            enqueue(buffered, to: shell, onDelivered: nil)
         } else {
-            send(buffered) { for fire in deliveries { fire() } }
+            enqueue(buffered, to: shell) { for fire in deliveries { fire() } }
         }
     }
 
@@ -444,6 +456,10 @@ public final class TerminalPanelViewModel {
     /// accepted before the first refusal are still delivered. In every other
     /// shell-less state (`.closed`, `.ended`) the bytes are
     /// dropped: nothing is on its way that could ever deliver them.
+    ///
+    /// A running shell takes every send, whatever `inputRefused` says, and
+    /// the first one it takes clears the notice: the latch binds only the
+    /// opening attempt, and the notice has by then been on screen.
     ///
     /// Returns whether the bytes were taken: `true` when they were handed to
     /// the shell's send chain or are held for the shell that is opening,
@@ -466,6 +482,17 @@ public final class TerminalPanelViewModel {
             if let onDelivered { pendingDeliveries.append(onDelivered) }
             return true
         }
+        inputRefused = false
+        enqueue(bytes, to: shell, onDelivered: onDelivered)
+        return true
+    }
+
+    /// Chains `bytes` onto the send queue of `shell`. The part of `send`
+    /// that is the same for a live send and for the flush of the held bytes,
+    /// which differ in whether they clear the notice.
+    private func enqueue(
+        _ bytes: [UInt8], to shell: any RemoteShell, onDelivered: (@MainActor () -> Void)?
+    ) {
         let previous = sendTask
         sendTask = Task {
             await previous?.value
@@ -478,7 +505,6 @@ public final class TerminalPanelViewModel {
                 // exists so a caller can record what actually went out.
             }
         }
-        return true
     }
 
     /// Reports a new terminal size (SSH window-change).

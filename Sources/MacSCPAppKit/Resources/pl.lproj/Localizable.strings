@@ -285,7 +285,7 @@
 /* Panel terminala */
 "terminal.ended" = "Powłoka zakończona.";
 "terminal.reopen" = "Otwórz ponownie";
-"terminal.inputRefused" = "Część danych wejściowych nie została wysłana: terminal jest jeszcze otwierany.";
+"terminal.inputRefused" = "Część danych wejściowych nie została wysłana podczas otwierania terminala.";
 "terminal.snippets.button" = "Fragmenty";
 
 /* Kolumny tabeli plików zdalnych */
