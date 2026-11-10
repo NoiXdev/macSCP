@@ -23,24 +23,34 @@ import Testing
 /// write, `anObjectACLWriteIsAcceptedAndTheStoreKeepsNothing` turns red, and
 /// the red is the signal that a shipped decision wants revisiting.
 ///
-/// **Three cases take measurements nobody had taken**, assumed during Tasks 2
+/// **Three measurements nobody had taken**, assumed during Tasks 2
 /// and 5: whether the store keeps an empty custom metadata value (it does,
 /// empty), whether it keeps one outside ASCII (macSCP now sends such a value as
 /// an RFC 2047 encoded-word and decodes it on the way back, so it reads back as
 /// typed; three further cases measure a long value, a value another tool
 /// wrote raw, and the raw request that used to fail), and whether
 /// a metadata `REPLACE` copy changes an object's effective ACL (it does not,
-/// byte for byte). Each of them says in its own doc comment what it measured
-/// and what it did NOT.
+/// byte for byte). Each of the cases that take them says in its own doc
+/// comment what it measured and what it did NOT.
 ///
 /// **Task 4 of the non-ASCII plan (2026-11-10) withdraws** the middle clause
 /// of the sentence above, which read, verbatim: "whether it keeps one outside
 /// ASCII (macSCP's own request never gets there — 403 `SignatureDoesNotMatch`,
 /// which is a defect the case records)". The defect is fixed in shipped code
 /// (the value is encoded before it is signed), and the case that recorded it
-/// asserts the round trip now. The same sentence's opening, "Three cases take
-/// measurements nobody had taken", is unchanged and still counts three
-/// measurements, not three cases: the non-ASCII measurement is four cases now.
+/// asserts the round trip now.
+///
+/// **The same task, fix round 1, withdraws two more wordings** of that
+/// paragraph. Its opening read, verbatim: "Three cases take measurements
+/// nobody had taken". That was false the moment the non-ASCII measurement
+/// became four cases (this suite has thirteen cases in all), so it now says
+/// "Three measurements nobody had taken", which is what it always counted.
+/// Its last sentence read, verbatim: "Each of the three says in its own doc
+/// comment what it measured and what it did NOT." Round one of this task
+/// reworded it to "Each of them" without quoting it; the reworded sentence is
+/// now "Each of the cases that take them", and it is true of every one of them
+/// because the long-value case and the canary were given the sentence they
+/// lacked.
 ///
 /// Creates and deletes its OWN throwaway buckets (`macscp-mg-<purpose>-<hex>`);
 /// the rig's `macscp-seed`, `macscp-second` and `macscp-probe-lock` are never
@@ -712,6 +722,13 @@ struct S3MetadataGatedTests {
     /// (copy 200, no refusal code), so what is asserted is acceptance and the
     /// round trip. Had it refused, the status and code it answered would have
     /// been the measurement to assert instead.
+    ///
+    /// **What it does NOT measure or prove:** any other store (this one is
+    /// RustFS, and AWS documents a 2 KB cap on user metadata that this value,
+    /// at 1132 characters, stays under); a value long enough to meet that or
+    /// the store's header-size limit, which no case here probes; and that a
+    /// store splitting the word into adjacent words would be read back, which
+    /// the decoder's own unit tests cover and this rig never sends.
     @Test func aValueTooLongForOneEncodedWordRoundTrips() async throws {
         let rig = try await MetadataRigBucket.make(purpose: "longvalue")
         guard let rig else { return }
@@ -838,6 +855,13 @@ struct S3MetadataGatedTests {
     /// **What it asserts:** the raw request is refused, as 403
     /// `SignatureDoesNotMatch`, which is what was measured on 2026-11-04 and
     /// again on 2026-11-10 on the same rig, and that nothing was stored raw.
+    ///
+    /// **What it does NOT prove:** that nothing was stored. `rawRoundTrips ==
+    /// false` also holds when the object has no such header at all, which is
+    /// what any refused copy leaves, so that assertion is not independent
+    /// evidence; the 403 and the `<Code>` assertions are the evidence. Nor
+    /// does it say anything about the encoder or the capability, which the
+    /// round-trip case above measures, or about any store but this one.
     @Test func aRawNonASCIIHeaderFromTheProjectsOwnSignerIsStillRefused() async throws {
         let rig = try await MetadataRigBucket.make(purpose: "rawsigner")
         guard let rig else { return }
@@ -1112,7 +1136,13 @@ private struct MetadataRigBucket {
     {
         let config = Self.config
         let url = "\(config.endpoint)/\(bucket)/\(key)"
+        // `-q` is first because curl honours it only as its first argument:
+        // it keeps `~/.curlrc` from changing a loopback measurement. The
+        // no-proxy pattern is one argument, `*`, because no shell is involved,
+        // so a proxy in the environment cannot sit between the test and the
+        // rig either.
         var arguments = [
+            "-q", "--noproxy", "*",
             "--silent", "--show-error", "--request", "PUT", "--data-binary", "",
             "--aws-sigv4", "aws:amz:\(config.region):s3",
             "--user", "\(config.accessKeyID):\(config.secretAccessKey)",
