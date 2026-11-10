@@ -117,9 +117,17 @@ struct S3MetadataGatedTests {
     /// The custom metadata value a case sends and reads back. Named so that
     /// the comparison is one expression and the value is written once.
     private static let noteValue = "set-by-suite"
-    /// A value outside ASCII, for the round-trip nobody had measured. HTTP
-    /// header values are not UTF-8 by default, so this can round-trip, be
-    /// mangled, or be refused.
+    /// A value outside ASCII, the one the non-ASCII cases below send and read
+    /// back. Final-review fix round 1 withdraws the wording that stood here,
+    /// verbatim:
+    ///
+    /// > A value outside ASCII, for the round-trip nobody had measured. HTTP
+    /// > header values are not UTF-8 by default, so this can round-trip, be
+    /// > mangled, or be refused.
+    ///
+    /// It was true until the cases below ran. They measure the round trip now:
+    /// through the capability it round-trips, and the store reports it as an
+    /// encoded word.
     private static let nonASCIIValue = "Jahresübersicht-日本語"
     /// A value whose single encoded-word is past RFC 2047's 75-character cap:
     /// 40 repetitions of a 14-character, 21-byte unit.
@@ -716,7 +724,9 @@ struct S3MetadataGatedTests {
     /// encoded copy is sent first, by hand, so that the store's own answer
     /// (status and `<Code>`) is on record; the capability then writes and reads
     /// the same value back, and the case asserts that the decoded read-back
-    /// equals what was sent.
+    /// equals what was sent. "Hand" in the names `handStatus`, `handCode` and
+    /// the printed `handCopy=` means sent by hand and already encoded; it does
+    /// NOT mean a raw non-ASCII value, which only the canary below sends.
     ///
     /// **Measured 2026-11-10 on the rig:** the store ACCEPTS the one long word
     /// (copy 200, no refusal code), so what is asserted is acceptance and the
@@ -736,16 +746,16 @@ struct S3MetadataGatedTests {
         let encoded = RFC2047.encodedWord(value)
 
         var failure: (any Error)?
-        var rawStatus: Int?
-        var rawCode: String?
+        var handStatus: Int?
+        var handCode: String?
         var capabilityError: (any Error)?
         var capabilityRoundTrips: Bool?
         do {
             _ = try await rig.put("long.txt", Data("n".utf8), contentType: "text/plain")
             let (body, response) = try await rig.replaceCopy(
                 "long.txt", headers: ["content-type": "text/plain", "x-amz-meta-label": encoded])
-            rawStatus = response.statusCode
-            rawCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
+            handStatus = response.statusCode
+            handCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
             let sent = ObjectMetadata(
                 contentType: "text/plain", cacheControl: nil, contentDisposition: nil,
                 custom: ["label": value], entityTag: nil)
@@ -765,13 +775,13 @@ struct S3MetadataGatedTests {
             "[S3MetadataGated] long non-ASCII custom value:"
                 + " sentCharacters=\(value.count) sentBytes=\(value.utf8.count)"
                 + " encodedCharacters=\(encoded.count)"
-                + " rawCopy=\(rawStatus.map(String.init) ?? "-") rawCode=\(rawCode ?? "-")"
+                + " handCopy=\(handStatus.map(String.init) ?? "-") handCode=\(handCode ?? "-")"
                 + " capabilityThrew=\(capabilityError != nil)"
                 + " capabilityRoundTrips=\(capabilityRoundTrips.map(String.init) ?? "-")")
         #expect(failure == nil)
         #expect(encoded.count > 75, "the value no longer exceeds the encoded-word cap this case is about")
-        #expect(rawStatus == 200)
-        #expect(rawCode == nil)
+        #expect(handStatus == 200)
+        #expect(handCode == nil)
         #expect(capabilityError == nil)
         #expect(capabilityRoundTrips == true)
         #expect(cleaned == true, "the throwaway bucket was left behind")
@@ -854,14 +864,31 @@ struct S3MetadataGatedTests {
     ///
     /// **What it asserts:** the raw request is refused, as 403
     /// `SignatureDoesNotMatch`, which is what was measured on 2026-11-04 and
-    /// again on 2026-11-10 on the same rig, and that nothing was stored raw.
+    /// again on 2026-11-10 on the same rig, and that the object carries no
+    /// `x-amz-meta-label` header afterwards. The object was put without one,
+    /// so an absent header does show that the refused copy stored nothing.
     ///
-    /// **What it does NOT prove:** that nothing was stored. `rawRoundTrips ==
-    /// false` also holds when the object has no such header at all, which is
-    /// what any refused copy leaves, so that assertion is not independent
-    /// evidence; the 403 and the `<Code>` assertions are the evidence. Nor
-    /// does it say anything about the encoder or the capability, which the
-    /// round-trip case above measures, or about any store but this one.
+    /// **What it does NOT prove:** anything about the encoder or the
+    /// capability, which the round-trip case above measures, or about any
+    /// store but this one.
+    ///
+    /// Final-review fix round 1 withdraws two wordings of this comment and
+    /// the assertion under them. "What it asserts" ended, verbatim: "and that
+    /// nothing was stored raw." The next paragraph read, verbatim:
+    ///
+    /// > **What it does NOT prove:** that nothing was stored. `rawRoundTrips ==
+    /// > false` also holds when the object has no such header at all, which is
+    /// > what any refused copy leaves, so that assertion is not independent
+    /// > evidence; the 403 and the `<Code>` assertions are the evidence. Nor
+    /// > does it say anything about the encoder or the capability, which the
+    /// > round-trip case above measures, or about any store but this one.
+    ///
+    /// The assertion `rawRoundTrips == false` is replaced, not kept: it could
+    /// not tell stored from not stored in either direction. It also held if
+    /// the write HAD been kept, because this store reports even a raw write
+    /// as an encoded word, which
+    /// `aValueAnotherToolWroteRawReadsBackThroughTheCapabilityAsTyped`
+    /// measures.
     @Test func aRawNonASCIIHeaderFromTheProjectsOwnSignerIsStillRefused() async throws {
         let rig = try await MetadataRigBucket.make(purpose: "rawsigner")
         guard let rig else { return }
@@ -869,7 +896,7 @@ struct S3MetadataGatedTests {
         var failure: (any Error)?
         var copyStatus: Int?
         var refusalCode: String?
-        var rawRoundTrips: Bool?
+        var labelHeaderAbsent: Bool?
         do {
             _ = try await rig.put("r.txt", Data("n".utf8), contentType: "text/plain")
             let (body, response) = try await rig.replaceCopy(
@@ -880,7 +907,7 @@ struct S3MetadataGatedTests {
             // this shape can name the request's own signing material.
             refusalCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
             let head = try await rig.head("r.txt")
-            rawRoundTrips = head.value(forHTTPHeaderField: "x-amz-meta-label") == Self.nonASCIIValue
+            labelHeaderAbsent = head.value(forHTTPHeaderField: "x-amz-meta-label") == nil
         } catch {
             failure = error
         }
@@ -889,11 +916,11 @@ struct S3MetadataGatedTests {
         print(
             "[S3MetadataGated] non-ASCII custom value, raw through the project's signer:"
                 + " copy=\(copyStatus.map(String.init) ?? "-") refusalCode=\(refusalCode ?? "-")"
-                + " rawRoundTrips=\(rawRoundTrips.map(String.init) ?? "-")")
+                + " labelHeaderAbsent=\(labelHeaderAbsent.map(String.init) ?? "-")")
         #expect(failure == nil)
         #expect(copyStatus == 403)
         #expect(refusalCode == "SignatureDoesNotMatch")
-        #expect(rawRoundTrips == false)
+        #expect(labelHeaderAbsent == true)
         #expect(cleaned == true, "the throwaway bucket was left behind")
     }
 
