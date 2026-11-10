@@ -1669,11 +1669,14 @@ struct ContentView: View {
     /// `sendSnippet` sends a snippet's. `false` when that terminal is not the
     /// active tab's, or the tab has no shell, or the terminal refused the
     /// bytes (`TerminalPanelViewModel.send` returns `false` for a send its
-    /// opening buffer cannot hold; a running shell takes every send), so the
-    /// pane stops instead of typing the next line without this one. It tells
-    /// the two apart through `FileActionShell.refusedInput`: a refusal is
-    /// already worded by the terminal panel, and "this connection has none"
-    /// would be false of it.
+    /// opening buffer cannot hold), so the pane stops instead of typing the
+    /// next line without this one. A running shell takes every send, but the
+    /// guards below can still decline for a terminal that is not the active
+    /// tab's. The pane tells a refusal from those through
+    /// `FileActionShell.refusedInput`, which the window answers true only
+    /// for a terminal that is still opening: a refusal is already worded by
+    /// the terminal panel, and "this connection has none" would be false of
+    /// it.
     ///
     /// The destination is NAMED by the caller (the pane's own session), and
     /// the bytes go there or nowhere: revealing the panel and persisting its

@@ -656,8 +656,13 @@ extension ContentView {
                                         type: {
                                             typeFileActionBytes($0, into: session.terminal)
                                         },
+                                        // Only an opening terminal refuses a
+                                        // send, so a notice left standing after
+                                        // the shell runs is not a reason the
+                                        // last line was declined.
                                         refusedInput: {
                                             session.terminal.inputRefused
+                                                && session.terminal.state == .opening
                                         })
                                 )
                                 .frame(minWidth: BrowserPane.minimumWidth)
@@ -1132,6 +1137,15 @@ extension ContentView {
                 theme: theme,
                 onRunSnippet: { snippet, execute in triggerSnippet(snippet, execute: execute) }
             )
+            // Between the header and the surface, in the stack, and not drawn
+            // over the surface: an overlay would cover the bottom terminal
+            // row, which is where the prompt sits once the screen has
+            // scrolled, and would take the clicks, the drag-selection and the
+            // right-click menu of that row. A strip of its own covers no
+            // row. The price is accepted: showing or hiding it resizes the
+            // surface, and that sends a window change like any other resize
+            // of the panel.
+            inputRefusedNotice(session.terminal, theme: theme)
             ZStack {
                 // The frame the terminal surface sits inset within, so it
                 // follows the chosen theme rather than staying deep sea
@@ -1162,14 +1176,6 @@ extension ContentView {
                         // its own literal (see that enum's doc comment).
                         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
                         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
-                        // Input the opening buffer could not hold was
-                        // refused whole (`TerminalPanelViewModel.send`). The
-                        // notice stays after the shell is running, until the
-                        // next send it takes or the attempt ends, so it is
-                        // not only the opening state's message.
-                        .overlay(alignment: .bottom) {
-                            inputRefusedNotice(session.terminal, theme: theme)
-                        }
                 case .ended(let message):
                     VStack(spacing: 8) {
                         Text(message ?? L10n.string("terminal.ended", "Shell ended."))
@@ -1203,32 +1209,49 @@ extension ContentView {
         }
     }
 
-    /// The sentence the terminal panel shows while `inputRefused` holds:
-    /// input was refused whole because the opening buffer could not hold it.
-    /// Nothing at all otherwise. It is worded in the past tense because it
-    /// holds on after the shell has come up: the view model clears it at the
-    /// first send the running shell takes, not at `.running`.
+    /// The strip the terminal panel shows while `inputRefused` holds: input
+    /// was refused whole because the opening buffer could not hold it.
+    /// Nothing at all otherwise. The sentence is in the past tense because
+    /// the strip stays after the shell has come up; it ends with the attempt
+    /// or when the user dismisses it with the close button, which is offered
+    /// only while the shell is running (`dismissInputRefusal()` does nothing
+    /// otherwise, since the flag is also what keeps later input from being
+    /// typed without the refused text).
     ///
-    /// A function of its own, outside the `case .running, .opening:` text
-    /// `TerminalPanelInsetTests` scans, because it is a banner and pads
-    /// like the other banners in this file (`.padding(.horizontal, 12)`),
-    /// not like the terminal surface it sits over: the inset guard pins the
-    /// surface, the `.ended` block and the header to one shared pair, and a
-    /// fourth reader of that pair would change what that guard counts.
+    /// A function of its own, outside the text of the running-and-opening
+    /// case that `TerminalPanelInsetTests` scans, because it is a banner and
+    /// pads like the other banners in this file, with a literal inset, not
+    /// like the terminal surface: the inset guard pins the surface, the
+    /// ended block and the header to one shared pair, and a fourth reader of
+    /// that pair would change what that guard counts.
     @ViewBuilder
     private func inputRefusedNotice(
         _ terminal: TerminalPanelViewModel, theme: TerminalTheme
     ) -> some View {
         if terminal.inputRefused {
-            Text(L10n.string(
-                "terminal.inputRefused",
-                "Some input was not sent while the terminal was opening."))
-                .font(.system(size: 12))
-                .foregroundStyle(theme.foreground.swiftUIColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.background.swiftUIColor.opacity(0.9))
+            HStack(spacing: 8) {
+                Text(L10n.string(
+                    "terminal.inputRefused",
+                    "Some input was not sent while the terminal was opening."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.foreground.swiftUIColor)
+                Spacer(minLength: 0)
+                if terminal.state == .running {
+                    Button {
+                        terminal.dismissInputRefusal()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .accessibilityLabel(L10n.string("common.close", "Close"))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.foreground.swiftUIColor.opacity(0.7))
+                    .help(L10n.string("common.close", "Close"))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.background.swiftUIColor)
         }
     }
 }

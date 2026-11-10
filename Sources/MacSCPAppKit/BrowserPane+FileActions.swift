@@ -37,9 +37,10 @@ struct FileActionShell {
     /// Whether the terminal refused input of this attempt because its
     /// opening buffer was full. Read after `type` returned `false`, to tell
     /// "no shell" from "a shell that has not opened yet and cannot hold
-    /// more": the second is already worded by the terminal panel. The flag
-    /// can still be set once the shell runs, but a running shell takes every
-    /// send, so `type` is not `false` then.
+    /// more": the second is already worded by the terminal panel. The window
+    /// wiring answers it only for a terminal that is still opening, because
+    /// that is the only state that refuses a send; a notice left standing
+    /// after the shell runs says nothing about why a line was declined.
     let refusedInput: () -> Bool
 }
 
@@ -171,10 +172,9 @@ extension BrowserPane {
         case .noShell:
             fileActionAlertMessage = Self.noShellSentence
         case .refusedByTerminal:
-            // No alert: the terminal panel shows its own sentence for as
-            // long as the refusal is recorded
-            // (`TerminalPanelViewModel.inputRefused`), and "this connection
-            // has none" would be false of it.
+            // No alert: the terminal panel shows its own sentence while the
+            // refusal is recorded (`TerminalPanelViewModel.inputRefused`),
+            // and "this connection has none" would be false of it.
             return
         }
     }

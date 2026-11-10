@@ -78,10 +78,14 @@ public final class TerminalPanelViewModel {
     /// not. The notice outlives the shell coming up -- `state = .running`
     /// does not clear it -- because it is the refusal's only signal, and it
     /// must not disappear before anyone has read it, with the next command
-    /// typed landing without the refused text. It is cleared by the first
-    /// `send` the RUNNING shell takes (the user's next input, after the
-    /// notice has been on screen), which is not the flush of the held bytes
-    /// the shell's start makes: that one is the refusal's own prefix.
+    /// typed landing without the refused text. No `send` can stand for "the
+    /// user has seen it": everything the terminal view emits reaches `send`
+    /// through the same delegate method, and that includes the emulator's
+    /// own automatic replies to the remote's queries (device attributes,
+    /// cursor position, focus reports), which can arrive within moments of
+    /// the shell's start. So a running shell's sends leave the flag alone,
+    /// and only `dismissInputRefusal()` -- the user's own act, from the
+    /// panel's close button -- clears it while the shell runs.
     ///
     /// It is cleared as well at every end of the attempt it describes: when
     /// an open starts, when one fails, when the shell ends, and on
@@ -302,7 +306,7 @@ public final class TerminalPanelViewModel {
     /// (`keepingRefusal`): the refusal describes the attempt whose buffer
     /// this was, and every lifecycle drop path is the end of that attempt,
     /// while the flush only spends the buffer and leaves the notice on screen
-    /// (see `inputRefused`).
+    /// for the user to dismiss (see `inputRefused`).
     private func discardPendingInput(keepingRefusal: Bool = false) {
         pendingBytes = []
         pendingDeliveries = []
@@ -458,8 +462,8 @@ public final class TerminalPanelViewModel {
     /// dropped: nothing is on its way that could ever deliver them.
     ///
     /// A running shell takes every send, whatever `inputRefused` says, and
-    /// the first one it takes clears the notice: the latch binds only the
-    /// opening attempt, and the notice has by then been on screen.
+    /// no send touches it: the latch binds only the opening attempt, and the
+    /// notice is cleared by `dismissInputRefusal()` or by the attempt ending.
     ///
     /// Returns whether the bytes were taken: `true` when they were handed to
     /// the shell's send chain or are held for the shell that is opening,
@@ -482,14 +486,26 @@ public final class TerminalPanelViewModel {
             if let onDelivered { pendingDeliveries.append(onDelivered) }
             return true
         }
-        inputRefused = false
         enqueue(bytes, to: shell, onDelivered: onDelivered)
         return true
     }
 
-    /// Chains `bytes` onto the send queue of `shell`. The part of `send`
-    /// that is the same for a live send and for the flush of the held bytes,
-    /// which differ in whether they clear the notice.
+    /// Clears the refusal notice because the user has dismissed it, and only
+    /// while the shell is running.
+    ///
+    /// A no-op in every other state, on purpose: while the attempt is
+    /// opening the flag is also the latch that keeps later input from being
+    /// typed without the refused text, and dismissing a sentence must not
+    /// reopen that gap. Once the shell runs the latch no longer binds
+    /// anything, so only the notice is left to dismiss.
+    public func dismissInputRefusal() {
+        guard state == .running else { return }
+        inputRefused = false
+    }
+
+    /// Chains `bytes` onto the send queue of `shell`. Shared by a live send
+    /// and by the flush of the held bytes at the shell's start; neither
+    /// touches `inputRefused`.
     private func enqueue(
         _ bytes: [UInt8], to shell: any RemoteShell, onDelivered: (@MainActor () -> Void)?
     ) {

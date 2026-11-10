@@ -1185,7 +1185,7 @@ struct TerminalPanelViewModelDeliveryTests {
         #expect(afterDelivered.count == 0)
     }
 
-    @Test func theLatchClearsOnTheNextAttempt() async throws {
+    @Test func aLatchedAttemptThatFailedLeavesTheNextOneAcceptingInput() async throws {
         struct OpenFailure: Error {}
         let attempts = Counter()
         let shell = MockShell()
@@ -1264,9 +1264,10 @@ struct TerminalPanelViewModelDeliveryTests {
     }
 
     /// The latch binds only the opening attempt: a running shell takes every
-    /// send, however large and whatever the flag says, and the first one it
-    /// takes clears the notice.
-    @Test func theFirstSendTheRunningShellTakesClearsTheRefusalAndIsDelivered() async throws {
+    /// send, however large and whatever the flag says, and no send touches
+    /// the notice -- a terminal view's own automatic replies arrive through
+    /// the same method as the user's typing, so no send can mean "seen".
+    @Test func aSendToTheRunningShellIsDeliveredAndLeavesTheRefusalAlone() async throws {
         let shell = MockShell()
         let gate = OpenGate()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in
@@ -1285,11 +1286,53 @@ struct TerminalPanelViewModelDeliveryTests {
         // to a running shell.
         let accepted = vm.send([UInt8](repeating: 3, count: 64 * 1024 + 1)) { delivered.bump() }
         #expect(accepted)
-        #expect(vm.inputRefused == false)
         await delivered.waitForFirstDelivery()
         let sentCount = shell.sent.flatMap { $0 }.count
         #expect(sentCount == 64 * 1024 + 1)
         #expect(delivered.count == 1)
+        #expect(vm.inputRefused)
+    }
+
+    @Test func dismissingTheRefusalClearsItOnceTheShellRuns() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.inputRefused)
+
+        vm.dismissInputRefusal()
+        #expect(vm.inputRefused == false)
+    }
+
+    /// While the attempt is opening the flag is also the latch, and a
+    /// dismissal must not reopen the gap it closes.
+    @Test func dismissingTheRefusalWhileOpeningChangesNothingAndTheLatchHolds() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        #expect(vm.state == .opening)
+        #expect(vm.inputRefused)
+
+        vm.dismissInputRefusal()
+        #expect(vm.inputRefused)
+        let after = vm.send([0x61])
+        #expect(after == false)
+
+        gate.open()
+        try await pollUntil("the shell is running") { vm.state == .running }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(shell.sent.isEmpty)
     }
 
     /// The notice that outlived the shell's start still ends with the
@@ -1314,7 +1357,7 @@ struct TerminalPanelViewModelDeliveryTests {
         #expect(vm.inputRefused == false)
     }
 
-    @Test func theRefusalClearsWhenTheOpenFailsAndStaysClearOnTheNextAttempt() async throws {
+    @Test func aFailedOpenEndsTheRefusalAndTheReopenStartsWithoutIt() async throws {
         struct OpenFailure: Error {}
         let attempts = Counter()
         let shell = MockShell()

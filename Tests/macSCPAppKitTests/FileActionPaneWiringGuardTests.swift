@@ -188,6 +188,31 @@ struct FileActionPaneWiringGuardTests {
         #expect(regions[1].contains("shell: FileActionShell("))
     }
 
+    /// The pane tells a terminal's refusal from a missing shell through
+    /// `refusedInput`, and a `{ false }` there would send every refusal to
+    /// the "this connection has none" alert while all the typing tests stay
+    /// green. Positive: the closure reads the terminal's own refusal flag AND
+    /// its opening state (only an opening terminal refuses a send). Compared
+    /// without whitespace, because the expression is wrapped.
+    @Test func refusedInputReadsTheTerminalsRefusalAndItsOpeningState() throws {
+        let detail = try Self.code("ContentView+Detail.swift")
+        let regions = Array(detail.components(separatedBy: "BrowserPane(").dropFirst())
+        let remote = try #require(regions.last)
+        let compact = remote.filter { !$0.isWhitespace }
+        #expect(
+            compact.contains(
+                "refusedInput:{session.terminal.inputRefused&&session.terminal.state==.opening}"))
+    }
+
+    /// The notice is a strip in the panel and its close button reaches the
+    /// view model's own dismissal, which is what keeps the latch intact while
+    /// the shell is still opening.
+    @Test func theNoticeStripIsMountedAndItsCloseButtonDismissesThroughTheViewModel() throws {
+        let detail = try Self.code("ContentView+Detail.swift")
+        #expect(detail.contains("inputRefusedNotice(session.terminal, theme: theme)"))
+        #expect(detail.contains("terminal.dismissInputRefusal()"))
+    }
+
     @Test func everyRunKeyIsInAllFourCataloguesAndUsed() throws {
         let literals = try Self.literals("FileActionActivityRow.swift")
             + Self.literals("BrowserPane+FileActions.swift")
