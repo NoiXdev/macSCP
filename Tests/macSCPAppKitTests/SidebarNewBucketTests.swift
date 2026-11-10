@@ -1931,14 +1931,15 @@ struct SidebarNewBucketTests {
         let request = try #require(view.createBucketFromSidebar(stored))
         view.jumpToOpenSession(request)
 
-        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting, """
-            the delivery handed over a request on a pane standing inside a bucket, where the \
-            route declines without a word
+        try #require(view.deliverPendingCreateBucket(on: tab) == .waiting, """
+            the delivery did not wait on a pane standing inside a bucket, where the route \
+            declines without a word
             """)
         #expect(tab.pendingCreateBucket != nil, "a request that is waiting must stay armed")
         try await pollUntil("the navigation to the bucket list to return") {
-            tab.pendingCreateBucket?.bucketListNavigation == .made
+            tab.pendingCreateBucket?.bucketListNavigation != .inFlight
         }
+        #expect(tab.pendingCreateBucket?.bucketListNavigation == .made)
         #expect(fs.rootStatCount == 1, "the pane was not navigated to the bucket list exactly once")
         #expect(session.remote.currentPath == "/", "the pane is not at the bucket list")
         #expect(session.remote.state == .loaded)
@@ -1965,7 +1966,7 @@ struct SidebarNewBucketTests {
 
         let request = try #require(view.createBucketFromSidebar(stored))
         view.jumpToOpenSession(request)
-        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        try #require(view.deliverPendingCreateBucket(on: tab) == .waiting)
         _ = await fs.rootStatEntered.wait()
 
         // Held at the navigation's first step: the pane has not moved.
@@ -1980,8 +1981,9 @@ struct SidebarNewBucketTests {
 
         fs.rootStatRelease.signal()
         try await pollUntil("the navigation to the bucket list to return") {
-            tab.pendingCreateBucket?.bucketListNavigation == .made
+            tab.pendingCreateBucket?.bucketListNavigation != .inFlight
         }
+        #expect(tab.pendingCreateBucket?.bucketListNavigation == .made)
         #expect(session.remote.currentPath == "/")
         #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
     }
@@ -2003,10 +2005,11 @@ struct SidebarNewBucketTests {
 
         let request = try #require(view.createBucketFromSidebar(stored))
         view.jumpToOpenSession(request)
-        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        try #require(view.deliverPendingCreateBucket(on: tab) == .waiting)
         try await pollUntil("the navigation to the bucket list to return") {
-            tab.pendingCreateBucket?.bucketListNavigation == .made
+            tab.pendingCreateBucket?.bucketListNavigation != .inFlight
         }
+        #expect(tab.pendingCreateBucket?.bucketListNavigation == .made)
         #expect(fs.rootStatCount == 1, "the control: the first navigation was made")
         try await standInsideTheFirstBucket(session)
 
@@ -2037,7 +2040,7 @@ struct SidebarNewBucketTests {
 
         let request = try #require(view.createBucketFromSidebar(stored))
         view.jumpToOpenSession(request)
-        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        try #require(view.deliverPendingCreateBucket(on: tab) == .waiting)
         try await pollUntil("the navigation's failure to drop the request") {
             tab.pendingCreateBucket == nil
         }
