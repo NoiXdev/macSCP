@@ -54,7 +54,7 @@ struct SessionFieldOptions: ParsableArguments {
 
     @Option(
         name: .long,
-        help: "SSH, WebDAV and FTP: the user name to log in as. Leave it out and an FTP session logs in anonymously.")
+        help: "SSH, WebDAV and FTP: the user name to log in as. For anonymous FTP, leave it out when adding the session, or pass --user anonymous.")
     var user: String?
 
     @Option(name: .long, help: "SSH: path to a private key; the session authenticates with it.")
