@@ -645,9 +645,12 @@ final class SessionTab: Identifiable {
     /// account the user did not pick.
     ///
     /// Three writers:
-    /// - `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:
-    ///   createsBucket:)` SETS it, on the tab the tab rule just picked, and
-    ///   only when that tab is not already dialling.
+    /// - `ContentView.armPendingCreateBucket(on:storedSessionID:)` SETS it,
+    ///   and only when the tab is not already dialling. It is reached from
+    ///   `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:
+    ///   createsBucket:)`, on the tab the tab rule just picked, and from
+    ///   `ContentView.jumpToOpenSession(_:)`, on the tab "Go to Existing Tab"
+    ///   activates (maintainer decision of 2026-11-10).
     /// - `ContentView.deliverPendingCreateBucket(on:)` clears it -- before the
     ///   hand-off, so a repeated observation cannot open a second sheet, and
     ///   on every outcome that is not a hand-off (no session, another

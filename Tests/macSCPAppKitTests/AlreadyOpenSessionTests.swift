@@ -217,9 +217,10 @@ struct AlreadyOpenSessionTests {
 
     // MARK: - What the two answers do
 
-    /// "Go to Existing Tab" activates the tab the query named, and touches
-    /// nothing else: no tab is closed, nothing is merged, and no dial
-    /// happens.
+    /// "Go to Existing Tab" activates the tab the query named, and for an
+    /// ordinary start touches nothing else: no tab is closed, nothing is
+    /// merged, and no dial happens. (A "Connect and Create Bucket…" start
+    /// also arms its request on that tab; `SidebarNewBucketTests` holds that.)
     @Test func jumpingActivatesTheTabTheQueryNamed() async {
         let workDir = makeTempDirectory("already-open-jump")
         defer { try? FileManager.default.removeItem(at: workDir) }

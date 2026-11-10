@@ -425,10 +425,12 @@ struct ContentView: View {
         /// connect. `false` for every other start.
         ///
         /// Like the snippet it rides on the QUESTION rather than on a tab,
-        /// and the three answers need no clearing rule: two of them drop the
-        /// request, and the third hands this to `startWithoutAsking`.
-        /// "Go to Existing Tab" is one of the two that drop it, the same as
-        /// for a snippet -- it activates a tab and moves nothing else.
+        /// and the three answers need no clearing rule: Cancel drops the
+        /// request, "Open Anyway" hands this to `startWithoutAsking`, and
+        /// "Go to Existing Tab" arms it on the tab it activates -- the one
+        /// place the two forks differ, because a pending create-bucket cannot
+        /// take anything from a dial the active tab is running (maintainer
+        /// decision of 2026-11-10; the snippet is still dropped there).
         let createsBucket: Bool
     }
 
@@ -2631,6 +2633,8 @@ struct ContentView: View {
     /// anything, and a request left behind would wait for somebody else's
     /// attempt. The target is never a connected tab, so the reconnect-in-place
     /// teardown, which clears it, cannot run here and take the write back.
+    /// The arming itself is `armPendingCreateBucket(on:storedSessionID:)`,
+    /// which "Go to Existing Tab" reaches too.
     func startWithoutAsking(
         _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil,
         createsBucket: Bool = false
@@ -2641,11 +2645,26 @@ struct ContentView: View {
             target.pendingSnippetRun = SessionTab.PendingSnippetRun(
                 snippet: pendingSnippet, storedSessionID: stored.id)
         }
-        if createsBucket, !target.isReconnecting {
-            target.pendingCreateBucket = SessionTab.PendingCreateBucket(
-                storedSessionID: stored.id)
+        if createsBucket {
+            armPendingCreateBucket(on: target, storedSessionID: stored.id)
         }
         connect(in: target, stored: stored, paneVisibility: paneVisibility)
+    }
+
+    /// Arms the create-bucket request on a tab -- the ONE place that does,
+    /// reached from the start (`startWithoutAsking`) and from the already-open
+    /// query's "Go to Existing Tab" (`jumpToOpenSession(_:)`). Two copies of
+    /// the arming are how the two answers would come to disagree about when a
+    /// request is left behind.
+    ///
+    /// Not armed when the tab is already dialling: whatever that attempt
+    /// produces is somebody else's, and a request left behind would wait for
+    /// it. The delivery owns every later decision (`deliverPendingCreateBucket
+    /// (on:)` waits, drops or hands over), so this makes none of them.
+    func armPendingCreateBucket(on tab: SessionTab, storedSessionID: UUID) {
+        guard !tab.isReconnecting else { return }
+        tab.pendingCreateBucket = SessionTab.PendingCreateBucket(
+            storedSessionID: storedSessionID)
     }
 
     /// The fresh tab `startWithoutAsking`'s tab rule asks for: the window's
@@ -2655,20 +2674,42 @@ struct ContentView: View {
         sidebarTabFactory?() ?? makeTab()
     }
 
-    /// "Go to Existing Tab" — the whole of that choice.
+    /// "Go to Existing Tab": looks at the other tab, and carries the
+    /// connection manager's "Connect and Create Bucket…" request over to it
+    /// when the question was raised for one (maintainer decision of
+    /// 2026-11-10).
     ///
     /// It closes nothing and merges nothing: the other tab keeps its
     /// session, and this window simply looks at it. When the tab named here
     /// is already the active one, activating it changes nothing, which is
     /// what that answer means in that situation.
+    ///
+    /// **The create-bucket request is armed on the existing tab, through the
+    /// same `armPendingCreateBucket(on:storedSessionID:)` a start uses, and
+    /// the delivery that already exists does the rest.** That delivery waits
+    /// for exactly what this answer produces -- a session, the request's
+    /// stored connection, the tab in front, a loaded bucket list -- and
+    /// `PendingCreateBucketRunner` wakes on the request being armed as well
+    /// as on the tab changing, so a tab that is already connected, in front
+    /// and showing its list (no connect event is coming for it) is delivered
+    /// to as well. A tab that is not found (closed while the question was up)
+    /// is armed nowhere; one that is dialling is not armed (see the helper);
+    /// a list that failed to load drops the request in the delivery.
+    ///
+    /// **The snippet fork is deliberately different.** Nothing to clear and
+    /// nothing to carry for the overview's Run (session overview plan, Task
+    /// 3, fix round 1): a snippet asked for while this query was raised rode
+    /// on the REQUEST, never on a tab, so this answer drops it by discarding
+    /// the request -- and the clear that used to stand here could take a
+    /// snippet away from a dial the active tab was already running for
+    /// something else. A pending create-bucket has no such cost, which is why
+    /// the two forks are allowed to differ.
     func jumpToOpenSession(_ request: AlreadyOpenSessionRequest) {
-        // Nothing to clear for the overview's Run (session overview plan,
-        // Task 3, fix round 1). A snippet asked for while this query was
-        // raised rode on the REQUEST, never on a tab, so this answer drops
-        // it by discarding the request — and the clear that used to stand
-        // here could take a snippet away from a dial the active tab was
-        // already running for something else.
         tabsModel.activate(request.existingTabID)
+        guard request.createsBucket,
+            let existing = tabsModel.tabs.first(where: { $0.id == request.existingTabID })
+        else { return }
+        armPendingCreateBucket(on: existing, storedSessionID: request.stored.id)
     }
 
     /// Fills the tab's form from the store + keychain and connects right

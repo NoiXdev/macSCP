@@ -1768,6 +1768,185 @@ struct SidebarNewBucketTests {
         try await pollUntil("the dial to settle") { tab.session != nil }
     }
 
+    // MARK: - "Go to Existing Tab" carries the request over
+
+    /// A connected tab holding `stored`, with its bucket list loaded -- the
+    /// state the already-open query is raised against. Built the way a user
+    /// gets there: a first "Connect and Create Bucket…" connects the tab, and
+    /// its own hand-off is consumed, so the tab is armed with nothing.
+    private func connectedHolder(
+        _ view: ContentView, _ tab: SessionTab, _ stored: StoredSession
+    ) async throws {
+        view.createBucketFromSidebar(stored)
+        try await pollUntil("the holder to hold a session") { tab.session != nil }
+        await tab.session?.remote.load()
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+        #expect(tab.pendingCreateBucket == nil, "the control: the first request was consumed")
+    }
+
+    /// The maintainer's decision of 2026-11-10: "Go to Existing Tab" on a
+    /// "Connect and Create Bucket…" question arms the request on the tab it
+    /// activates, and the delivery that already exists opens the sheet. Here
+    /// the tab is already in front and already showing its loaded list, so
+    /// nothing else will change when the answer is given: what wakes the
+    /// runner is the request itself being armed.
+    @Test func goingToTheExistingTabCarriesTheRequestOverToAConnectedFrontTab() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-front")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, dials) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        #expect(request.existingTabID == tab.id)
+        #expect(tab.pendingCreateBucket == nil, "asking must not arm anything")
+        view.jumpToOpenSession(request)
+
+        #expect(tab.pendingCreateBucket != nil, "the answer dropped the request it was asked for")
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+        #expect(dials.count == 1, "answering with the existing tab must not dial again")
+        #expect(view.tabsModel.tabs.count == 1, "answering with the existing tab opened another")
+    }
+
+    /// The same answer for a tab that is NOT in front: it is activated, and the
+    /// request it carries is delivered once it is.
+    @Test func goingToTheExistingTabActivatesItAndTheRequestIsDeliveredThere() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-back")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let elsewhere = makeTab(dialing: nil)
+        view.tabsModel.addTab(elsewhere)
+        view.tabsModel.activate(elsewhere.id)
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        #expect(request.existingTabID == tab.id)
+        view.jumpToOpenSession(request)
+
+        #expect(view.tabsModel.activeTabID == tab.id)
+        #expect(elsewhere.pendingCreateBucket == nil, "the request was armed on the tab left behind")
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+    }
+
+    /// Without the flag the answer is what it always was: activate, nothing
+    /// armed. The flag has to be a thing the request carries, not something
+    /// every jump arms.
+    @Test func goingToTheExistingTabArmsNothingForAnOrdinaryConnect() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-plain")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+
+        let request = try #require(view.connectFromSidebar(stored))
+        #expect(!request.createsBucket, "the control: this request does not ask for a bucket")
+        view.jumpToOpenSession(request)
+
+        #expect(tab.pendingCreateBucket == nil)
+        #expect(view.deliverPendingCreateBucket(on: tab) == .notArmed)
+    }
+
+    /// A list that is still loading at the moment of the jump: the request is
+    /// armed and waits, exactly as it does for a tab that has just connected.
+    @Test func aRequestCarriedOverWaitsForABucketListThatHasNotLoaded() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-loading")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        view.createBucketFromSidebar(stored)
+        try await pollUntil("the holder to hold a session") { tab.session != nil }
+        let session = try #require(tab.session)
+        tab.pendingCreateBucket = nil
+        #expect(session.remote.state == .loading, "the control: the list has not loaded")
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+        await session.remote.load()
+        #expect(view.deliverPendingCreateBucket(on: tab) == .handedToTheRoute)
+    }
+
+    /// A list that failed to load at the moment of the jump: the request is
+    /// dropped by the delivery, the same as for a fresh tab.
+    @Test func aRequestCarriedOverIsDroppedWhenTheBucketListFailedToLoad() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-failed-list")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem(listFails: true))
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        view.createBucketFromSidebar(stored)
+        try await pollUntil("the holder to hold a session") { tab.session != nil }
+        await tab.session?.remote.load()
+        tab.pendingCreateBucket = nil
+        guard case .failed = tab.session?.remote.state else {
+            Issue.record("the control: the list was supposed to fail to load")
+            return
+        }
+
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.jumpToOpenSession(request)
+
+        #expect(tab.pendingCreateBucket != nil, "the control: the answer armed the request")
+        #expect(view.deliverPendingCreateBucket(on: tab) == .dropped)
+        #expect(tab.pendingCreateBucket == nil)
+    }
+
+    /// The tab is dialling again by the time the answer is given (a reconnect
+    /// began while the question was up): the answer arms nothing, by the same
+    /// rule a start applies to a target that is already dialling -- the attempt
+    /// belongs to somebody else, and a request left behind would wait for it.
+    @Test func aTabThatIsDiallingWhenTheAnswerIsGivenIsNotArmed() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-dialling")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let request = try #require(view.createBucketFromSidebar(stored))
+        tab.isReconnecting = true
+
+        view.jumpToOpenSession(request)
+
+        #expect(view.tabsModel.activeTabID == tab.id, "the control: the answer still activates the tab")
+        #expect(tab.pendingCreateBucket == nil)
+    }
+
+    /// The tab was closed while the question was up: activating an id that
+    /// names no tab leaves the active tab alone, and there is nothing to arm
+    /// -- least of all on the tab that stayed.
+    @Test func aTabClosedWhileTheQuestionWasUpIsNotArmedAnywhere() async throws {
+        let workDir = makeTempDirectory("new-bucket-jump-closed")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem())
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+        try await connectedHolder(view, tab, stored)
+        let elsewhere = makeTab(dialing: nil)
+        view.tabsModel.addTab(elsewhere)
+        view.tabsModel.activate(elsewhere.id)
+        let request = try #require(view.createBucketFromSidebar(stored))
+        view.tabsModel.closeTab(tab.id)
+
+        view.jumpToOpenSession(request)
+
+        #expect(view.tabsModel.activeTabID == elsewhere.id)
+        #expect(elsewhere.pendingCreateBucket == nil)
+        #expect(tab.pendingCreateBucket == nil)
+    }
+
     /// An ordinary connect carries no such request: the flag has to be a thing
     /// this entry sets, not a default every start inherits.
     @Test func anOrdinaryConnectArmsNothing() async throws {
