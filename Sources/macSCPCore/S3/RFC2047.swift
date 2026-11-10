@@ -4,9 +4,14 @@ import Foundation
 /// back, using RFC 2047 encoded words. An `x-amz-meta-*` header value may
 /// carry only ASCII: a raw non-ASCII byte makes the request signature
 /// disagree between client and store, and the store answers
-/// `SignatureDoesNotMatch`. The same encoding is what the AWS CLI and several
-/// SDKs write for such a value, so an object written here reads back
-/// sensibly there.
+/// `SignatureDoesNotMatch`.
+///
+/// What is known about stores. AWS's documentation says the service returns a
+/// non-ASCII user-defined metadata value RFC 2047-encoded; that is a reading
+/// of the documentation and was not measured here. What was measured, on the
+/// rig's RustFS 1.0.4 on 2026-11-04 and 2026-11-10: a value written as raw
+/// UTF-8 bytes by another tool is reported back as an encoded word. No client
+/// tool's behaviour is claimed.
 ///
 /// Both functions are **total**: neither throws and neither returns `nil`. A
 /// codec that threw would push a decision about malformed input into every
@@ -41,13 +46,22 @@ enum RFC2047 {
     /// Reads a value as a store answered it.
     ///
     /// A run bracketed as an encoded word (charset, encoding and text, each
-    /// ended by a question mark) is decoded when its charset is UTF-8 (compared without regard to
-    /// case), its encoding is `B` (base64) or `Q` (quoted-printable, where an
-    /// underscore means a space; compared without regard to case) and its
-    /// payload decodes to valid UTF-8. A run that fails any of those tests is
-    /// left exactly as it stands, character for character, and so is
-    /// everything outside a word: a store that answered with the raw bytes
-    /// comes back unchanged.
+    /// ended by a question mark) is decoded when its charset is UTF-8
+    /// (compared without regard to case), its encoding is `B` (base64) or `Q`
+    /// (quoted-printable, where an underscore means a space; compared without
+    /// regard to case) and its payload decodes to valid UTF-8. A run that
+    /// fails any of those tests is left exactly as it stands, character for
+    /// character, and so is everything outside a word: text that is not an
+    /// encoded word is passed through unchanged.
+    ///
+    /// The input is a `String`, which the transport has already made from the
+    /// header's bytes. How `URLSession` makes it from raw non-ASCII bytes
+    /// (UTF-8 or another charset) is unmeasured, so whether a store's raw
+    /// header reaches this function as the text the store kept is unmeasured
+    /// too.
+    ///
+    /// A leading U+FEFF in a decoded word is kept as text, not stripped as a
+    /// byte-order mark.
     ///
     /// Whitespace between two adjacent decoded words is dropped (RFC 2047
     /// section 6.2). Text between two words, and whitespace beside a run that
@@ -135,7 +149,10 @@ enum RFC2047 {
         case "q": bytes = qDecoded(payload)
         default: bytes = nil
         }
-        guard let bytes, let text = String(data: bytes, encoding: .utf8) else { return nil }
+        // Not `String(data:encoding:)`: that strips a leading U+FEFF as a
+        // byte-order mark, and the read-back would then disagree with a
+        // value that starts with one.
+        guard let bytes, let text = String(validating: bytes, as: UTF8.self) else { return nil }
         return (text, cursor)
     }
 

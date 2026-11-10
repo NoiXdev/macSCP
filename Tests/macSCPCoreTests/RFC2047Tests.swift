@@ -69,6 +69,37 @@ import Testing
         }
     }
 
+    /// A leading U+FEFF is part of the text, not a byte-order mark to strip.
+    /// The sheet's trim keeps it, so a pasted value can start with one; a
+    /// decoder that dropped it would make the read-back disagree with what
+    /// was typed. Both the base64 and the quoted-printable path are checked,
+    /// and each expectation is a precomputed `Bool` so a failing run does not
+    /// print the value.
+    @Test func aLeadingByteOrderMarkSurvivesTheRoundTrip() {
+        let typed = "\u{FEFF}M\u{00FC}ller"
+        let viaEncoder = RFC2047.decoded(RFC2047.encodedWord(typed)) == typed
+        #expect(viaEncoder)
+        let viaQ = RFC2047.decoded("=?UTF-8?Q?=EF=BB=BFabc?=") == "\u{FEFF}abc"
+        #expect(viaQ)
+        let aloneInTheWord = RFC2047.decoded("=?UTF-8?B?77u/?=") == "\u{FEFF}"
+        #expect(aloneInTheWord)
+    }
+
+    /// An ASCII value that merely contains the two-character opener, without
+    /// being a word, is encoded and comes back as typed.
+    @Test func anASCIIValueWithAStrayOpenerRoundTripsAsTyped() {
+        let typed = "a =? b"
+        let round = RFC2047.decoded(RFC2047.encodedWord(typed)) == typed
+        #expect(round)
+    }
+
+    /// The base64 half of "the payload does not decode": a payload that is
+    /// not base64 at all, as opposed to one that decodes to invalid UTF-8
+    /// (the `/w==` case in `aMalformedWordDoesNotSpoilItsNeighbours`).
+    @Test func aPayloadThatIsNotBase64StaysUndecoded() {
+        #expect(RFC2047.decoded("=?UTF-8?B?!!!!?=") == "=?UTF-8?B?!!!!?=")
+    }
+
     /// Text between two words is kept; only whitespace-only gaps vanish.
     @Test func textBetweenEncodedWordsIsKeptVerbatim() {
         #expect(RFC2047.decoded("=?UTF-8?Q?a?= and =?UTF-8?Q?b?=") == "a and b")
