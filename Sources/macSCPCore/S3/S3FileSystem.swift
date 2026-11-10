@@ -2788,7 +2788,11 @@ extension S3FileSystem: ObjectMetadataProvider {
     ///
     /// Refused with `metadataFieldRefusedReason`, before anything is sent: a
     /// value with a control character (a line break would end the header and
-    /// start another), a custom name that is empty or is not an HTTP token,
+    /// start another; for a custom value this is checked on the text as typed
+    /// as well as on its wire form, because the encoded form hides it), a
+    /// value of one of the three standard fields that is not plain ASCII
+    /// (those are token-valued and never encoded; the sheet names the field
+    /// before this is reached), a custom name that is empty or is not an HTTP token,
     /// and a custom name that already carries the transport prefix in any
     /// case (`ObjectMetadata.custom` says its keys do not; sent as it is, the
     /// key would be prefixed twice and read back under another name than the
@@ -2802,23 +2806,29 @@ extension S3FileSystem: ObjectMetadataProvider {
         ]
         for (name, value) in standard {
             guard let value else { continue }
-            guard headerValueIsSendable(value) else {
+            guard headerValueIsSendable(value), valueIsASCII(value) else {
                 throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
             }
             headers[name] = value
         }
         // A custom value is put on the wire as an RFC 2047 encoded word when it
         // is not plain ASCII, and the sendability check below runs on that
-        // wire form, which is what the signer will see. The reason is that a
-        // custom-metadata header is the one place a store's signature check
-        // refuses raw non-ASCII bytes. The three standard fields above are
-        // different: they are read and written as the person typed them, were
-        // never encoded, and are not decoded on the way back; how they carry
-        // non-ASCII text is a separate matter and is not decided here.
+        // wire form, which is what the signer will see, and on the value as
+        // typed, because an encoded word is base64 and would hide a control
+        // character. The reason for the encoding: on 2026-11-04 a store
+        // (RustFS) was measured to answer a custom value sent as raw
+        // non-ASCII bytes with a signature failure, which the person reads as
+        // a credentials problem. That measurement was made for custom values;
+        // the backlog row "A non-ASCII metadata value in ANY of the four field
+        // classes is reported to the user as a credentials problem, and the
+        // fix has TWO layers" records that the standard fields share the
+        // defect. They cannot be encoded the same way: they are token-valued,
+        // are returned as received, and are therefore refused above when the
+        // value is not plain ASCII.
         for (name, value) in metadata.custom {
             let wireValue = RFC2047.encodedWord(value)
             guard headerNameIsToken(name), !name.lowercased().hasPrefix(customMetadataHeaderPrefix),
-                headerValueIsSendable(wireValue)
+                headerValueIsSendable(value), headerValueIsSendable(wireValue)
             else {
                 throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
             }
@@ -2833,6 +2843,10 @@ extension S3FileSystem: ObjectMetadataProvider {
 
     private static func headerNameIsToken(_ name: String) -> Bool {
         !name.isEmpty && name.unicodeScalars.allSatisfy { tokenCharacters.contains($0) }
+    }
+
+    private static func valueIsASCII(_ value: String) -> Bool {
+        value.unicodeScalars.allSatisfy { $0.value < 0x80 }
     }
 
     private static func headerValueIsSendable(_ value: String) -> Bool {

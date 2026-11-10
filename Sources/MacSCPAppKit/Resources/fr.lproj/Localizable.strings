@@ -567,6 +567,9 @@
 "s3.metadata.blocked.customNameInvalid" = "Un nom personnalisé ne peut contenir que des lettres, des chiffres et ces caractères : ! # $ % & ' * + - . ^ _ ` | ~";
 "s3.metadata.blocked.customNamePrefixed" = "macSCP ajoute lui-même le préfixe dont un nom personnalisé a besoin. Saisissez le nom sans « x-amz-meta- ».";
 "s3.metadata.blocked.customNameDuplicated" = "Deux paires personnalisées portent le même nom. Les noms ne distinguent pas les majuscules des minuscules.";
+"s3.metadata.blocked.contentTypeNotPlainText" = "Content-Type n’accepte que du texte simple, sans accents ni autres caractères spéciaux.";
+"s3.metadata.blocked.cacheControlNotPlainText" = "Cache-Control n’accepte que du texte simple, sans accents ni autres caractères spéciaux.";
+"s3.metadata.blocked.contentDispositionNotPlainText" = "Content-Disposition n’accepte que du texte simple, sans accents ni autres caractères spéciaux.";
 
 /* S3 object access list, read-only (S3 metadata, Task 5) */
 "s3.acl.heading" = "Liste d’accès";

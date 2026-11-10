@@ -422,6 +422,70 @@ struct S3ObjectMetadataTests {
         #expect(authorization.contains("x-amz-meta-note"))
     }
 
+    /// The three standard fields are token-valued and are never encoded, so a
+    /// non-ASCII value in one of them would reach the signer as raw bytes and
+    /// come back as a credentials error. It is refused here, before anything
+    /// is sent. Each expectation is a precomputed `Bool`: the value under test
+    /// carries the non-ASCII the report would otherwise print.
+    @Test func aNonASCIIValueInAStandardFieldIsRefusedAndNothingIsSent() async throws {
+        let text = Self.typedNonASCII
+        let cases: [(name: String, metadata: ObjectMetadata)] = [
+            (
+                "contentType",
+                ObjectMetadata(
+                    contentType: text, cacheControl: nil, contentDisposition: nil,
+                    custom: [:], entityTag: nil)
+            ),
+            (
+                "cacheControl",
+                ObjectMetadata(
+                    contentType: nil, cacheControl: text, contentDisposition: nil,
+                    custom: [:], entityTag: nil)
+            ),
+            (
+                "contentDisposition",
+                ObjectMetadata(
+                    contentType: nil, cacheControl: nil, contentDisposition: "attachment; filename=\(text).txt",
+                    custom: [:], entityTag: nil)
+            ),
+        ]
+        for item in cases {
+            let (fs, transport) = try await S3SettingsFake.connect(responses: [])
+            var thrown: RemoteFSError?
+            do {
+                try await fs.setMetadata(item.metadata, ofKey: "a.txt", inBucket: Self.bucket)
+            } catch let error as RemoteFSError {
+                thrown = error
+            }
+            let wasRefused =
+                thrown == RemoteFSError.protocolError(reason: S3FileSystem.metadataFieldRefusedReason)
+            #expect(wasRefused, "\(item.name) was not refused")
+            let nothingSent = await Self.sent(transport).isEmpty
+            #expect(nothingSent, "\(item.name) was sent")
+        }
+        #expect(cases.count == 3)
+    }
+
+    /// A control character in a custom value must stay refused when the value
+    /// is also non-ASCII: the encoded form is base64 and hides it, so the
+    /// check has to look at what the person typed as well.
+    @Test func aNonASCIICustomValueWithAControlCharacterIsRefusedAndNothingIsWritten() async throws {
+        for value in [Self.typedNonASCII + "\n", "\r\n" + Self.typedNonASCII, Self.typedNonASCII + "\u{7F}"] {
+            let (fs, transport) = try await S3SettingsFake.connect(responses: [])
+            var thrown: RemoteFSError?
+            do {
+                try await fs.setMetadata(Self.noteOnly(value), ofKey: "a.txt", inBucket: Self.bucket)
+            } catch let error as RemoteFSError {
+                thrown = error
+            }
+            let wasRefused =
+                thrown == RemoteFSError.protocolError(reason: S3FileSystem.metadataFieldRefusedReason)
+            #expect(wasRefused)
+            let nothingSent = await Self.sent(transport).isEmpty
+            #expect(nothingSent)
+        }
+    }
+
     @Test func anEncodedWordInTheHeadAnswerReachesTheCallerDecoded() async throws {
         let (fs, _) = try await S3SettingsFake.connect(responses: [
             Self.head(["x-amz-meta-note": Self.typedNonASCIIAsEncodedWord])

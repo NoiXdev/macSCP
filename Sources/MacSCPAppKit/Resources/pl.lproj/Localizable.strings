@@ -565,6 +565,9 @@
 "s3.metadata.blocked.customNameInvalid" = "Nazwa niestandardowa może zawierać tylko litery, cyfry i te znaki: ! # $ % & ' * + - . ^ _ ` | ~";
 "s3.metadata.blocked.customNamePrefixed" = "macSCP sam dodaje przedrostek, którego potrzebuje nazwa niestandardowa. Wpisz nazwę bez „x-amz-meta-”.";
 "s3.metadata.blocked.customNameDuplicated" = "Dwie pary niestandardowe mają tę samą nazwę. Wielkość liter nie odróżnia nazw.";
+"s3.metadata.blocked.contentTypeNotPlainText" = "Content-Type przyjmuje tylko zwykły tekst, bez znaków diakrytycznych ani innych znaków specjalnych.";
+"s3.metadata.blocked.cacheControlNotPlainText" = "Cache-Control przyjmuje tylko zwykły tekst, bez znaków diakrytycznych ani innych znaków specjalnych.";
+"s3.metadata.blocked.contentDispositionNotPlainText" = "Content-Disposition przyjmuje tylko zwykły tekst, bez znaków diakrytycznych ani innych znaków specjalnych.";
 
 /* S3 object access list, read-only (S3 metadata, Task 5) */
 "s3.acl.heading" = "Lista dostępu";

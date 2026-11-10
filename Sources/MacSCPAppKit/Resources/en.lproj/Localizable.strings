@@ -570,6 +570,9 @@
 "s3.metadata.blocked.customNameInvalid" = "A custom name may use only letters, digits and these characters: ! # $ % & ' * + - . ^ _ ` | ~";
 "s3.metadata.blocked.customNamePrefixed" = "macSCP adds the prefix a custom name needs on its own. Type the name without “x-amz-meta-”.";
 "s3.metadata.blocked.customNameDuplicated" = "Two custom pairs have the same name. Names do not distinguish upper and lower case.";
+"s3.metadata.blocked.contentTypeNotPlainText" = "Content-Type takes plain text only, without accents or other special characters.";
+"s3.metadata.blocked.cacheControlNotPlainText" = "Cache-Control takes plain text only, without accents or other special characters.";
+"s3.metadata.blocked.contentDispositionNotPlainText" = "Content-Disposition takes plain text only, without accents or other special characters.";
 
 /* S3 object access list, read-only (S3 metadata, Task 5) */
 "s3.acl.heading" = "Access list";

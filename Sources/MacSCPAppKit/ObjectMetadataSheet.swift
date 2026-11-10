@@ -120,6 +120,19 @@ enum ObjectMetadataLines {
     static let customNameDuplicatedLine = CatalogueLine(
         key: "s3.metadata.blocked.customNameDuplicated",
         english: "Two custom pairs have the same name. Names do not distinguish upper and lower case.")
+    /// The three standard fields, each named, because the person typed the
+    /// text into one of them and has to know which one to change. The
+    /// sentences say what the field takes and never why: the reason is how
+    /// the store carries the field, which the person did not type.
+    static let contentTypeNotPlainTextLine = CatalogueLine(
+        key: "s3.metadata.blocked.contentTypeNotPlainText",
+        english: "Content-Type takes plain text only, without accents or other special characters.")
+    static let cacheControlNotPlainTextLine = CatalogueLine(
+        key: "s3.metadata.blocked.cacheControlNotPlainText",
+        english: "Cache-Control takes plain text only, without accents or other special characters.")
+    static let contentDispositionNotPlainTextLine = CatalogueLine(
+        key: "s3.metadata.blocked.contentDispositionNotPlainText",
+        english: "Content-Disposition takes plain text only, without accents or other special characters.")
 
     /// Every line above, in one place.
     static let all: [CatalogueLine] = [
@@ -127,7 +140,8 @@ enum ObjectMetadataLines {
         customHeading, customNone, customNameLabel, customValueLabel, addPair, removePair,
         replaceNote, versionAdded, versionUnknown, complianceWarning, complianceAcknowledgement,
         saveUnconfirmed, saveAction, unchangedLine, customNameMissingLine, customNameInvalidLine,
-        customNamePrefixedLine, customNameDuplicatedLine,
+        customNamePrefixedLine, customNameDuplicatedLine, contentTypeNotPlainTextLine,
+        cacheControlNotPlainTextLine, contentDispositionNotPlainTextLine,
     ]
 
     /// The lines the sheet draws that belong to other sheets' families.
@@ -483,6 +497,9 @@ final class ObjectMetadataModel {
         case customNameInvalid
         case customNamePrefixed
         case customNameDuplicated
+        case contentTypeNotPlainText
+        case cacheControlNotPlainText
+        case contentDispositionNotPlainText
     }
 
     /// Everything that can keep Save off. See `BucketObjectLockModel.SaveBlocker`
@@ -665,10 +682,21 @@ final class ObjectMetadataModel {
     /// here only to refuse a name that already carries it.
     private static let transportPrefix = "x-amz-meta-"
 
-    /// The first reason the custom pairs cannot be sent, or `nil`. Core
-    /// refuses the same names (`S3FileSystem.setMetadata`), but as a fixed
-    /// "could not be saved"; the sheet says which pair and why before that.
+    /// Whether `text`, as the draft would send it, is plain ASCII. An empty
+    /// field is not sent, so it is plain.
+    private static func isPlainText(_ text: String) -> Bool {
+        (normalisedField(text) ?? "").unicodeScalars.allSatisfy { $0.value < 0x80 }
+    }
+
+    /// The first reason the draft cannot be sent, or `nil`: a standard field
+    /// that does not take the text typed into it, then a custom pair that
+    /// cannot be sent. Core refuses the same values (`S3FileSystem.setMetadata`),
+    /// but as a fixed "could not be saved"; the sheet says which field or
+    /// pair and why before that.
     var draftProblem: DraftProblem? {
+        if !Self.isPlainText(contentType) { return .contentTypeNotPlainText }
+        if !Self.isPlainText(cacheControl) { return .cacheControlNotPlainText }
+        if !Self.isPlainText(contentDisposition) { return .contentDispositionNotPlainText }
         var seen = Set<String>()
         for row in filledRows {
             let name = row.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -783,6 +811,9 @@ final class ObjectMetadataModel {
             case .customNameInvalid: ObjectMetadataLines.customNameInvalidLine
             case .customNamePrefixed: ObjectMetadataLines.customNamePrefixedLine
             case .customNameDuplicated: ObjectMetadataLines.customNameDuplicatedLine
+            case .contentTypeNotPlainText: ObjectMetadataLines.contentTypeNotPlainTextLine
+            case .cacheControlNotPlainText: ObjectMetadataLines.cacheControlNotPlainTextLine
+            case .contentDispositionNotPlainText: ObjectMetadataLines.contentDispositionNotPlainTextLine
             case nil: nil
             }
         case .acknowledgementStale: BucketObjectLockModel.staleLine

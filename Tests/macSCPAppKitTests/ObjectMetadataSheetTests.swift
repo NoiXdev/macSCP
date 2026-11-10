@@ -696,12 +696,57 @@ struct ObjectMetadataSheetTests {
                 case .customNameInvalid: ObjectMetadataLines.customNameInvalidLine
                 case .customNamePrefixed: ObjectMetadataLines.customNamePrefixedLine
                 case .customNameDuplicated: ObjectMetadataLines.customNameDuplicatedLine
+                case .contentTypeNotPlainText: ObjectMetadataLines.contentTypeNotPlainTextLine
+                case .cacheControlNotPlainText: ObjectMetadataLines.cacheControlNotPlainTextLine
+                case .contentDispositionNotPlainText: ObjectMetadataLines.contentDispositionNotPlainTextLine
                 }
             #expect(line == expectedLine, "\(item.expected)")
             #expect(await rig.model.save() == .blocked)
             #expect(rig.provider.writes.isEmpty, "\(item.expected) was sent")
         }
         #expect(cases.count == 7)
+    }
+
+    /// The three standard fields take plain text only. The sheet names the
+    /// field before a save is attempted; Core would refuse the same value but
+    /// without saying which field. The value under test is non-ASCII, so each
+    /// expectation about it is a precomputed `Bool`.
+    @MainActor @Test func aNonASCIIStandardFieldKeepsSaveOffAndNamesTheField() async {
+        let text = "M\u{00FC}ller"
+        let cases:
+            [(
+                field: ReferenceWritableKeyPath<ObjectMetadataModel, String>,
+                expected: ObjectMetadataModel.DraftProblem, line: CatalogueLine
+            )] = [
+                (\.contentType, .contentTypeNotPlainText, ObjectMetadataLines.contentTypeNotPlainTextLine),
+                (\.cacheControl, .cacheControlNotPlainText, ObjectMetadataLines.cacheControlNotPlainTextLine),
+                (
+                    \.contentDisposition, .contentDispositionNotPlainText,
+                    ObjectMetadataLines.contentDispositionNotPlainTextLine
+                ),
+            ]
+        for item in cases {
+            let rig = Rig()
+            await rig.model.load()
+            rig.model[keyPath: item.field] = text
+            let problemIsTheField = rig.model.draftProblem == item.expected
+            #expect(problemIsTheField, "\(item.expected)")
+            #expect(rig.model.canSave == false, "\(item.expected)")
+            let saysTheField = rig.model.explanation == item.line
+            #expect(saysTheField, "\(item.expected)")
+            #expect(await rig.model.save() == .blocked)
+            #expect(rig.provider.writes.isEmpty, "\(item.expected) was sent")
+        }
+        #expect(cases.count == 3)
+    }
+
+    @MainActor @Test func plainTextInTheStandardFieldsRaisesNoProblem() async {
+        let rig = Rig()
+        await rig.model.load()
+        rig.model.contentType = "text/plain; charset=utf-8"
+        rig.model.cacheControl = "max-age=60"
+        rig.model.contentDisposition = "attachment; filename=\"report.txt\""
+        #expect(rig.model.draftProblem == nil)
     }
 
     // MARK: - The trail
@@ -977,10 +1022,11 @@ struct ObjectMetadataSheetTests {
     /// with it). The command that produces it, from the repository root:
     /// `grep -o '"s3\.metadata\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l`.
     /// Adding a line means changing this figure, which is the point. It was
-    /// 23 until `ObjectMetadataLines.saveUnconfirmed` arrived; the command
-    /// above printed 24 on 2026-11-04, for `en` and for each of the three
-    /// other catalogues with its path substituted.
-    static let lineCount = 24
+    /// 23 until `ObjectMetadataLines.saveUnconfirmed` arrived, and 24 until
+    /// the three "takes plain text only" sentences for the standard fields
+    /// arrived; the command above printed 27 on 2026-11-10, for `en` and for
+    /// each of the three other catalogues with its path substituted.
+    static let lineCount = 27
 
     @Test func theFamilyHasTheLinesItIsWrittenDownToHave() throws {
         #expect(ObjectMetadataLines.all.count == Self.lineCount)
