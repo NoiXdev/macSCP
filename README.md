@@ -5,8 +5,8 @@
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-555)](#install)
 [![License: MIT](https://img.shields.io/github/license/NoiXdev/macSCP?label=license)](LICENSE)
 
-**A fast, native SFTP client for the Mac — two panes, saved sessions, and a
-built-in terminal.**
+**A fast, native file-transfer client for the Mac — SFTP, FTP, S3 and
+WebDAV in two panes, with saved sessions and a built-in terminal.**
 
 macSCP brings the classic two-pane file-transfer workflow to macOS as a
 true native app: browse your Mac on the left, your server on the right,
@@ -14,10 +14,11 @@ and move files between them with drag and drop, buttons, or the Finder.
 
 ## Features
 
-- **Three server protocols** — SFTP over SSH, S3-compatible object storage,
-  and WebDAV (Basic, Digest, and TLS auth; a one-click Nextcloud/ownCloud
-  preset). Mix and match freely, including transfers between two different
-  protocols in the same window. An S3 session can start at the account's
+- **Four server protocols** — SFTP over SSH, FTP (plain, explicit FTPS or
+  implicit FTPS), S3-compatible object storage, and WebDAV (Basic, Digest,
+  and TLS auth; a one-click Nextcloud/ownCloud preset). Mix and match
+  freely, including transfers between two different protocols in the same
+  window. An S3 session can start at the account's
   bucket list instead of one fixed bucket.
 - **Two-pane browser** — local and remote side by side, folder navigation
   by double-click, drag & drop in both directions (including dragging
@@ -47,7 +48,7 @@ and move files between them with drag and drop, buttons, or the Finder.
   toolbar, a saved session's context menu, or straight from a failed
   connection's error message. Runs name lookup, a reachability check, a
   ping, the connection attempt itself, a network route trace, and
-  protocol-specific checks for S3 and WebDAV; run everything at once or
+  protocol-specific checks for S3, WebDAV and FTP; run everything at once or
   just one, and copy the report as plain text or Markdown.
 - **Port forwarding** — local, dynamic (SOCKS5), and remote forwardings as
   saved profiles per session, started and stopped from its context menu,
@@ -89,10 +90,13 @@ and move files between them with drag and drop, buttons, or the Finder.
 - **Where the connection log lives.** Per-session audit logs are stored
   in `~/Library/Application Support/macSCP/audit/`, one file per saved
   connection. Deleting a saved connection deletes its log.
-- **No FTP or SMB/AFP support yet.** SFTP, S3-compatible storage, and
-  WebDAV are the three protocols macSCP speaks today.
-- **Cyberduck import does not yet cover WebDAV bookmarks.** SFTP and
-  S3-compatible bookmarks import; WebDAV ones are not recognised.
+- **No SMB/AFP support yet.** SFTP, FTP, S3-compatible storage, and
+  WebDAV are the four protocols macSCP speaks today.
+- **An FTP tab has no terminal.** FTP has no shell to open one on.
+- **Cyberduck import does not yet cover WebDAV or FTPS bookmarks.** SFTP,
+  FTP and S3-compatible bookmarks import; an FTP one arrives on explicit
+  FTPS, so no password is sent in the clear on a guess. WebDAV and FTPS
+  ones are not recognised.
 - **The network route trace covers IPv4 only.** An IPv6 route is not
   traced.
 
@@ -132,8 +136,9 @@ MACSCP_ITEST=1 swift test
 ```
 
 That brings up SSH (two servers, for remote-to-remote transfers), an
-S3-compatible object store, and an Apache/mod_dav WebDAV server with a Basic, a Digest, and a
-TLS vhost — the TLS certificate is generated fresh at container start and
+S3-compatible object store, two FTP servers (one with and one without
+MLSD; the first also takes explicit and implicit FTPS), and an
+Apache/mod_dav WebDAV server with a Basic, a Digest, and a TLS vhost — the TLS certificate is generated fresh at container start and
 never committed. A Nextcloud container sits behind a compose profile,
 since it exists only to produce one real PROPFIND response the WebDAV
 parser's test fixture is checked against — it stays out of the normal
@@ -258,7 +263,7 @@ line wrote the next time it becomes active — no restart needed.
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit
 `--password-command <cmd>` (the command's own stdout, trimmed); an
-environment variable (`MACSCP_PASSWORD` for an SSH or WebDAV session,
+environment variable (`MACSCP_PASSWORD` for an SSH, WebDAV or FTP session,
 `AWS_SECRET_ACCESS_KEY` for an S3 one); the keychain, same as the app
 itself uses; and, for a session signing in with a key the app manages,
 the passphrase the app stored for that key. A session authenticating
