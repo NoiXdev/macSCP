@@ -18,8 +18,8 @@ and move files between them with drag and drop, buttons, or the Finder.
   implicit FTPS), S3-compatible object storage, and WebDAV (Basic, Digest,
   and TLS auth; a one-click Nextcloud/ownCloud preset). Mix and match
   freely, including transfers between two different protocols in the same
-  window. An S3 session can start at the account's
-  bucket list instead of one fixed bucket.
+  window. An S3 session can start at the account's bucket list instead of
+  one fixed bucket.
 - **Two-pane browser** — local and remote side by side, folder navigation
   by double-click, drag & drop in both directions (including dragging
   remote files straight into the Finder). A sortable Type column shows
@@ -92,7 +92,8 @@ and move files between them with drag and drop, buttons, or the Finder.
   connection. Deleting a saved connection deletes its log.
 - **No SMB/AFP support yet.** SFTP, FTP, S3-compatible storage, and
   WebDAV are the four protocols macSCP speaks today.
-- **An FTP tab has no terminal.** FTP has no shell to open one on.
+- **Only SFTP tabs have a terminal.** S3, WebDAV and FTP have no shell
+  to open one on.
 - **Cyberduck import does not yet cover WebDAV or FTPS bookmarks.** SFTP,
   FTP and S3-compatible bookmarks import; an FTP one arrives on explicit
   FTPS, so no password is sent in the clear on a guess. WebDAV and FTPS
@@ -138,11 +139,12 @@ MACSCP_ITEST=1 swift test
 That brings up SSH (two servers, for remote-to-remote transfers), an
 S3-compatible object store, two FTP servers (one with and one without
 MLSD; the first also takes explicit and implicit FTPS), and an
-Apache/mod_dav WebDAV server with a Basic, a Digest, and a TLS vhost — the TLS certificate is generated fresh at container start and
-never committed. A Nextcloud container sits behind a compose profile,
-since it exists only to produce one real PROPFIND response the WebDAV
-parser's test fixture is checked against — it stays out of the normal
-`up -d` so that command remains fast:
+Apache/mod_dav WebDAV server with a Basic, a Digest, and a TLS vhost —
+the TLS certificate is generated fresh at container start and never
+committed. A Nextcloud container sits behind a compose profile, since it
+exists only to produce one real PROPFIND response the WebDAV parser's
+test fixture is checked against — it stays out of the normal `up -d` so
+that command remains fast:
 
 ```sh
 docker compose -f docker/test-server/compose.yml --profile nextcloud up -d nextcloud

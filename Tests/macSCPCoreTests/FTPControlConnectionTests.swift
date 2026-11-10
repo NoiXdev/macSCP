@@ -667,11 +667,27 @@ struct FTPControlConnectionTests {
         #expect(await server.receivedCommands.first { $0.verb == "USER" }?.argument == "anonymous")
     }
 
-    /// Only the empty string is the anonymous login. A name of nothing but
-    /// whitespace is sent as typed: the dial does not rewrite what the
-    /// person entered except in the one case, and a server that wants
-    /// that name gets it.
-    @Test func aUserNameOfOnlyWhitespaceIsNotTreatedAsEmpty() async throws {
+    /// Pins `FTPControlConnection.login(username:password:)` ALONE: only the
+    /// empty string is the anonymous login there, and a name of nothing but
+    /// whitespace that reaches the dial is sent as it arrives. That is a path
+    /// production does not reach with such a name -- this case builds its
+    /// `FTPConnectionConfig` directly, while every production dial builds it
+    /// in `FTPFieldSchema.makeConfig`, which trims the name, so a name of only
+    /// spaces arrives empty and logs in as `anonymous` (see the doc comment of
+    /// `login(username:password:)`, which carries the command for that). What
+    /// this case is for is that the dial itself does not rewrite a name it is
+    /// given beyond the one case.
+    ///
+    /// Renamed 2026-11-10 (final whole-branch review of the user-visible-bugs
+    /// branch, M1) from `aUserNameOfOnlyWhitespaceIsNotTreatedAsEmpty`, which
+    /// read as a statement about the app and the CLI, where such a name IS
+    /// treated as empty. The doc comment read, verbatim: "Only the empty
+    /// string is the anonymous login. A name of nothing but whitespace is sent
+    /// as typed: the dial does not rewrite what the person entered except in
+    /// the one case, and a server that wants that name gets it." Withdrawn:
+    /// "as typed" and "what the person entered" -- what a person types is
+    /// trimmed before it reaches the dial.
+    @Test func theDialAloneSendsANameOfOnlyWhitespaceAsItArrives() async throws {
         let stored = LoopbackFTPCredentials().password
         let server = Self.server(accepting: " ", password: stored)
         let outcome = try await Self.running(server) { host, port in

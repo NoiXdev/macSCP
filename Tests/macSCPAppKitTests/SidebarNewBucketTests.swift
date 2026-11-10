@@ -1300,6 +1300,61 @@ import Testing
 /// parking the arm EMPTIES the arm. Nothing in round 5's block is withdrawn beyond
 /// that clause's present tense.
 ///
+/// **The bucket-list navigation (2026-11-10, final whole-branch review of the
+/// user-visible-bugs branch, I1).** A request carried over by "Go to Existing
+/// Tab" onto a tab standing inside a bucket is navigated to the list once and
+/// handed over there; the four cases that pin it are the ones whose names
+/// begin `aTabStandingInsideABucket`, `theDeliveryDoesNotHandOverWhile`,
+/// `aSecondCallAfterTheNavigation` and `aFailedNavigationToTheBucketList`. Six
+/// plants, each through the harness, every one RED on a control of 38 tests
+/// with 0 pre-existing failures (filter `SidebarNewBucketTests`):
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-a the delivery hands over without asking the route for the current context' \
+///   --apply "perl -0pi -e 's/guard ConnectionActionRoute\.createBucket\.isAvailable\(in: context\) else \{/guard true || ConnectionActionRoute.createBucket.isAvailable(in: context) else {/' Sources/MacSCPAppKit/ContentView.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aFailedNavigationToTheBucketListDropsTheRequestAndLeavesItsFailureForThePathBar()
+///   macSCPAppKitTests.SidebarNewBucketTests/aSecondCallAfterTheNavigationDoesNotNavigateAgain()
+///   macSCPAppKitTests.SidebarNewBucketTests/aTabStandingInsideABucketIsNavigatedToTheListAndThenHandedOver()
+///   macSCPAppKitTests.SidebarNewBucketTests/theDeliveryDoesNotHandOverWhileThePaneIsStillInsideTheBucket()
+///
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-b the delivery does not wait for its own navigation in flight' \
+///   --apply "perl -0pi -e 's/        guard pending\.bucketListNavigation != \.inFlight else \{ return \.waiting \}\n//' Sources/MacSCPAppKit/ContentView.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theDeliveryDoesNotHandOverWhileThePaneIsStillInsideTheBucket()
+///
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-c the navigation is made again on a later call' \
+///   --apply "perl -0pi -e 's/guard pending\.bucketListNavigation == \.notMade, context\.rootIsContainerList else \{/guard context.rootIsContainerList else {/' Sources/MacSCPAppKit/ContentView.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aSecondCallAfterTheNavigationDoesNotNavigateAgain()
+///
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-d a failed navigation is not left for the path bar' \
+///   --apply "perl -0pi -e 's/                tab\.remoteNavigationFailure = PaneNavigationFailure\(\n                    path: bucketList, message: failure\)\n//' Sources/MacSCPAppKit/ContentView.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aFailedNavigationToTheBucketListDropsTheRequestAndLeavesItsFailureForThePathBar()
+///
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-e the runner signal no longer carries the pane path' \
+///   --apply "perl -0pi -e 's/            remotePath: tab\.session\?\.remote\.currentPath,\n/            remotePath: nil,\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+///
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'I1-f the runner signal no longer carries the navigation record' \
+///   --apply "perl -0pi -e 's/            bucketListNavigation: tab\.pendingCreateBucket\?\.bucketListNavigation,\n/            bucketListNavigation: nil,\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// RESULT: RED — 38 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// Not planted, because a red would be a five-minute `.timeLimit` rather than
+/// a named failure: the navigation's task never moving `.inFlight` on. What
+/// the pane does with `SessionTab.remoteNavigationFailure` is view code, which
+/// no test here reaches; nobody has looked at it in the running app.
+///
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {

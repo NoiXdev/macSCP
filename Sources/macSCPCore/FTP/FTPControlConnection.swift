@@ -813,14 +813,31 @@ actor FTPControlConnection {
     /// 1.3.9b, a `USER` with nothing after it is answered `500`, which the
     /// dial reads as a refused login, so a session saved with no name — what
     /// the form allows and what the CLI writes when `--user` is left out —
-    /// could never log in. Only the empty string counts. A name of nothing
-    /// but whitespace is sent as it arrives here: the dial does not rewrite
-    /// what it is given, with the single exception of nothing at all. (The
-    /// form's own conversion trims the name before the dial ever sees it, so
-    /// a name typed as spaces reaches the dial empty and is anonymous; this
-    /// function only sees a blank name that came from somewhere that does
-    /// not trim, an import or a hand-edited sessions file, and it leaves that
-    /// one alone.)
+    /// could never log in. Only the empty string counts HERE: a name of
+    /// nothing but whitespace is sent as it arrives at this function, which
+    /// does not rewrite what it is given, with the single exception of
+    /// nothing at all. No production path hands it such a name, though.
+    /// `FTPFieldSchema.makeConfig` is the one production constructor of
+    /// `FTPConnectionConfig` --
+    /// `/usr/bin/grep -rn 'FTPConnectionConfig(' Sources` with its `///` lines
+    /// dropped (`/usr/bin/grep -v '///'`) prints 1 line, in
+    /// `FTPFieldSchema.swift`, on 2026-11-10 -- and it trims the user name
+    /// (`trimmingCharacters(in: .whitespacesAndNewlines)`), so a name of only
+    /// spaces reaches the dial empty and logs in as `anonymous`, whether it
+    /// was typed into the form, imported, or written into a sessions file by
+    /// hand.
+    ///
+    /// Corrected 2026-11-10 (final whole-branch review of the
+    /// user-visible-bugs branch, M1). The paragraph above read, verbatim:
+    /// "A name of nothing but whitespace is sent as it arrives here: the dial
+    /// does not rewrite what it is given, with the single exception of
+    /// nothing at all. (The form's own conversion trims the name before the
+    /// dial ever sees it, so a name typed as spaces reaches the dial empty and
+    /// is anonymous; this function only sees a blank name that came from
+    /// somewhere that does not trim, an import or a hand-edited sessions
+    /// file, and it leaves that one alone.)" Withdrawn: an import and a
+    /// hand-edited file reach the dial through the same `makeConfig`, so the
+    /// "somewhere that does not trim" does not exist in production.
     ///
     /// The password placeholder is sent when the login that results is
     /// anonymous AND the stored password is empty. Both ways of reaching an

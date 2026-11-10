@@ -466,8 +466,11 @@ extension ContentView {
         tab.auditRecorder = recorder
         recorder.recordConnected(summary: summary, viaJumpHost: viaJumpHost)
         // Plaintext-transport audit trail (M21/T10): the connector closure
-        // set this right after the user confirmed connecting over
-        // `http://`; this is the first point afterward where a `sessionID`
+        // set this right after the user confirmed connecting without TLS --
+        // over `http://` (S3 or WebDAV) or over plain FTP, the two kinds
+        // `PlaintextTransportGate.Kind` has (`http`, `plainFTP`), and the two
+        // its `kind(for:)` answers with; this is the first point afterward
+        // where a `sessionID`
         // (and with it, a recorder) exists to log it against. See
         // `SessionTab.pendingPlaintextConfirmation`'s own doc comment for
         // why it is safe to consume unconditionally here.

@@ -1406,8 +1406,9 @@ struct TerminalPanelViewModelDeliveryTests {
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in MockShell() })
         let accepted = vm.send([0x61])
         #expect(accepted == false)
-        // Nothing is opening, so "the terminal is still opening" would be
-        // false of it.
+        // Nothing is opening, so the panel's refusal notice -- which says the
+        // input was not sent while the terminal was opening -- would be false
+        // of this drop.
         #expect(vm.inputRefused == false)
     }
 
