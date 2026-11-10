@@ -25,11 +25,22 @@ import Testing
 ///
 /// **Three cases take measurements nobody had taken**, assumed during Tasks 2
 /// and 5: whether the store keeps an empty custom metadata value (it does,
-/// empty), whether it keeps one outside ASCII (macSCP's own request never gets
-/// there — 403 `SignatureDoesNotMatch`, which is a defect the case records),
-/// and whether a metadata `REPLACE` copy changes an object's effective ACL (it
-/// does not, byte for byte). Each of the three says in its own doc comment what
-/// it measured and what it did NOT.
+/// empty), whether it keeps one outside ASCII (macSCP now sends such a value as
+/// an RFC 2047 encoded-word and decodes it on the way back, so it reads back as
+/// typed; three further cases measure a long value, a value another tool
+/// wrote raw, and the raw request that used to fail), and whether
+/// a metadata `REPLACE` copy changes an object's effective ACL (it does not,
+/// byte for byte). Each of them says in its own doc comment what it measured
+/// and what it did NOT.
+///
+/// **Task 4 of the non-ASCII plan (2026-11-10) withdraws** the middle clause
+/// of the sentence above, which read, verbatim: "whether it keeps one outside
+/// ASCII (macSCP's own request never gets there — 403 `SignatureDoesNotMatch`,
+/// which is a defect the case records)". The defect is fixed in shipped code
+/// (the value is encoded before it is signed), and the case that recorded it
+/// asserts the round trip now. The same sentence's opening, "Three cases take
+/// measurements nobody had taken", is unchanged and still counts three
+/// measurements, not three cases: the non-ASCII measurement is four cases now.
 ///
 /// Creates and deletes its OWN throwaway buckets (`macscp-mg-<purpose>-<hex>`);
 /// the rig's `macscp-seed`, `macscp-second` and `macscp-probe-lock` are never
@@ -100,6 +111,9 @@ struct S3MetadataGatedTests {
     /// header values are not UTF-8 by default, so this can round-trip, be
     /// mangled, or be refused.
     private static let nonASCIIValue = "Jahresübersicht-日本語"
+    /// A value whose single encoded-word is past RFC 2047's 75-character cap:
+    /// 40 repetitions of a 14-character, 21-byte unit.
+    private static let longNonASCIIValue = String(repeating: "übersicht-日本語-", count: 40)
 
     // MARK: Spec 4.5 — a metadata change is a copy
 
@@ -560,64 +574,88 @@ struct S3MetadataGatedTests {
         #expect(cleaned == true, "the throwaway bucket was left behind")
     }
 
-    /// **Measurement, not previously taken, and it found a defect.** Does the
-    /// store keep a custom metadata value outside ASCII? HTTP header values
-    /// are not UTF-8 by default, so this can round-trip, be mangled, or be
-    /// refused. `S3FileSystem.replacementHeaders` refuses only control
-    /// characters, so the sheet does not restrict the value's characters and
-    /// whichever of the three it is, it is already reachable from the UI.
+    /// **Measurement: a custom metadata value outside ASCII round-trips.**
+    /// Does the store keep a custom metadata value outside ASCII, and does the
+    /// capability hand it back as typed? HTTP header values are not UTF-8 by
+    /// default, so a store can keep one, mangle it, or refuse it.
     ///
-    /// **What was measured here, 2026-11-04 on rustfs 1.0.4.** The request
-    /// never reaches the store's metadata handling: it is answered **403**
-    /// with `<Code>SignatureDoesNotMatch</Code>`, and the capability maps that
-    /// to `.authenticationFailed`. So what a person typing an umlaut into the
-    /// sheet is told is to check their access key. The 403 is this project's
-    /// own request being inconsistent — what the signer signed and what the
-    /// transport put on the wire disagree for a non-ASCII header value — and
-    /// `S3FileSystem.signedRequest`'s doc comment already names that shape:
-    /// "indistinguishable, from the outside, from a key that lacks a
-    /// permission".
+    /// The decisions in shipped source that rest on it:
+    /// `S3FileSystem.replacementHeaders(for:)` sends such a value as an
+    /// RFC 2047 encoded-word, so the header the signer signs and the transport
+    /// sends is ASCII; `S3FileSystem.objectMetadata(from:)` decodes it on the
+    /// way back; and `metadata(_:confirms:)` compares the decoded value with
+    /// what was typed. This case sends through the capability, reads the raw
+    /// header off a `HEAD` to see the wire form, and reads it back through the
+    /// capability.
     ///
-    /// **And the store would have kept it.** Measured by hand the same day,
-    /// with curl's own SigV4 (which signs exactly the bytes it sends, and
-    /// listed `x-amz-meta-label` in `SignedHeaders`), on a throwaway bucket
-    /// that was deleted afterwards: the same `REPLACE` copy answered **200**,
-    /// and `HEAD` reported the value as an RFC 2047 encoded-word,
-    /// `=?UTF-8?B?...?=`, whose payload decodes to the bytes that were sent.
-    /// So the store accepts such a value and reports it encoded. **Not
-    /// measured:** what `setMetadata` would do once the 403 is fixed — its
-    /// read-back compares the value as typed, and an encoded-word is not that
-    /// string, which reads like a second layer but has not been run.
+    /// **What it asserts:** the write is confirmed (`setMetadata` does not
+    /// throw), the value read back equals what was typed, the header the store
+    /// holds is plain ASCII and decodes to what was typed.
     ///
-    /// **This case therefore asserts a defect, deliberately.** The figures are
-    /// the record; the day the request is made consistent, this case turns red
-    /// and the measurement is taken again rather than assumed.
-    @Test func aCustomMetadataValueOutsideASCII() async throws {
+    /// **What it does NOT assert:** which encoding the store reports. The
+    /// encoded-word is printed as a length and a boolean, never as a value.
+    ///
+    /// **Task 4 of the non-ASCII plan (2026-11-10) withdraws** the record this
+    /// case used to be, in place. The case was named
+    /// `aCustomMetadataValueOutsideASCII` and its doc comment said, verbatim:
+    ///
+    /// > **Measurement, not previously taken, and it found a defect.** Does the
+    /// > store keep a custom metadata value outside ASCII? HTTP header values
+    /// > are not UTF-8 by default, so this can round-trip, be mangled, or be
+    /// > refused. `S3FileSystem.replacementHeaders` refuses only control
+    /// > characters, so the sheet does not restrict the value's characters and
+    /// > whichever of the three it is, it is already reachable from the UI.
+    /// >
+    /// > **What was measured here, 2026-11-04 on rustfs 1.0.4.** The request
+    /// > never reaches the store's metadata handling: it is answered **403**
+    /// > with `<Code>SignatureDoesNotMatch</Code>`, and the capability maps that
+    /// > to `.authenticationFailed`. So what a person typing an umlaut into the
+    /// > sheet is told is to check their access key. The 403 is this project's
+    /// > own request being inconsistent — what the signer signed and what the
+    /// > transport put on the wire disagree for a non-ASCII header value — and
+    /// > `S3FileSystem.signedRequest`'s doc comment already names that shape:
+    /// > "indistinguishable, from the outside, from a key that lacks a
+    /// > permission".
+    /// >
+    /// > **And the store would have kept it.** Measured by hand the same day,
+    /// > with curl's own SigV4 (which signs exactly the bytes it sends, and
+    /// > listed `x-amz-meta-label` in `SignedHeaders`), on a throwaway bucket
+    /// > that was deleted afterwards: the same `REPLACE` copy answered **200**,
+    /// > and `HEAD` reported the value as an RFC 2047 encoded-word,
+    /// > `=?UTF-8?B?...?=`, whose payload decodes to the bytes that were sent.
+    /// > So the store accepts such a value and reports it encoded. **Not
+    /// > measured:** what `setMetadata` would do once the 403 is fixed — its
+    /// > read-back compares the value as typed, and an encoded-word is not that
+    /// > string, which reads like a second layer but has not been run.
+    /// >
+    /// > **This case therefore asserts a defect, deliberately.** The figures are
+    /// > the record; the day the request is made consistent, this case turns red
+    /// > and the measurement is taken again rather than assumed.
+    ///
+    /// Withdrawn: the sentence "This case therefore asserts a defect,
+    /// deliberately" and the assertions under it (`copy == 403`,
+    /// `refusalCode == "SignatureDoesNotMatch"`, `capabilityError != nil`,
+    /// `capabilityErrorIsAuthenticationFailed == true`). The defect it recorded
+    /// is fixed in shipped code, as that paragraph said the day it would turn
+    /// red. The "Not measured" sentence is answered by this case: the read-back
+    /// compares the decoded value, and there was no second layer once both
+    /// sides are decoded. The 403 itself is still true of a raw non-ASCII
+    /// header signed by the project's signer, and that is no longer the
+    /// product's path; it is kept as a canary by
+    /// `aRawNonASCIIHeaderFromTheProjectsOwnSignerIsStillRefused`.
+    @Test func aCustomMetadataValueOutsideASCIIRoundTripsThroughTheCapability() async throws {
         let rig = try await MetadataRigBucket.make(purpose: "nonascii")
         guard let rig else { return }
 
         var failure: (any Error)?
-        var copyStatus: Int?
-        var rawRoundTrips: Bool?
-        var rawValueCharacters: Int?
-        var refusalCode: String?
         var capabilityError: (any Error)?
-        var capabilityErrorIsAuthenticationFailed: Bool?
         var capabilityRoundTrips: Bool?
+        var wireValueCharacters: Int?
+        var wireValueIsASCII: Bool?
+        var wireValueDecodesToTheSentValue: Bool?
+        var wireValueIsAnEncodedWord: Bool?
         do {
             _ = try await rig.put("n.txt", Data("n".utf8), contentType: "text/plain")
-            let (body, response) = try await rig.replaceCopy(
-                "n.txt",
-                headers: ["content-type": "text/plain", "x-amz-meta-label": Self.nonASCIIValue])
-            copyStatus = response.statusCode
-            // Only the `<Code>` is read out, never the body: a refusal body of
-            // this shape can name the request's own signing material.
-            refusalCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
-            let head = try await rig.head("n.txt")
-            let value = head.value(forHTTPHeaderField: "x-amz-meta-label")
-            rawRoundTrips = value == Self.nonASCIIValue
-            rawValueCharacters = value?.count
-
             let sent = ObjectMetadata(
                 contentType: "text/plain", cacheControl: nil, contentDisposition: nil,
                 custom: ["label": Self.nonASCIIValue], entityTag: nil)
@@ -627,8 +665,13 @@ struct S3MetadataGatedTests {
                 capabilityRoundTrips = after.custom["label"] == Self.nonASCIIValue
             } catch {
                 capabilityError = error
-                capabilityErrorIsAuthenticationFailed =
-                    (error as? RemoteFSError) == .authenticationFailed
+            }
+            let head = try await rig.head("n.txt")
+            if let wire = head.value(forHTTPHeaderField: "x-amz-meta-label") {
+                wireValueCharacters = wire.count
+                wireValueIsASCII = wire.unicodeScalars.allSatisfy { $0.value < 0x80 }
+                wireValueDecodesToTheSentValue = RFC2047.decoded(wire) == Self.nonASCIIValue
+                wireValueIsAnEncodedWord = wire.hasPrefix("=?") && wire.hasSuffix("?=")
             }
         } catch {
             failure = error
@@ -636,22 +679,197 @@ struct S3MetadataGatedTests {
         let cleaned = await rig.teardown()
 
         print(
-            "[S3MetadataGated] non-ASCII custom value: copy=\(copyStatus.map(String.init) ?? "-")"
-                + " refusalCode=\(refusalCode ?? "-")"
-                + " rawRoundTrips=\(rawRoundTrips.map(String.init) ?? "-")"
-                + " rawValueCharacters=\(rawValueCharacters.map(String.init) ?? "-")"
-                + " sentCharacters=\(Self.nonASCIIValue.count)"
+            "[S3MetadataGated] non-ASCII custom value via the capability:"
                 + " capabilityThrew=\(capabilityError != nil)"
-                + " capabilityErrorIsAuthenticationFailed="
-                + "\(capabilityErrorIsAuthenticationFailed.map(String.init) ?? "-")"
+                + " capabilityRoundTrips=\(capabilityRoundTrips.map(String.init) ?? "-")"
+                + " wireValueCharacters=\(wireValueCharacters.map(String.init) ?? "-")"
+                + " wireValueIsASCII=\(wireValueIsASCII.map(String.init) ?? "-")"
+                + " wireValueIsAnEncodedWord=\(wireValueIsAnEncodedWord.map(String.init) ?? "-")"
+                + " wireValueDecodesToTheSentValue="
+                + "\(wireValueDecodesToTheSentValue.map(String.init) ?? "-")"
+                + " sentCharacters=\(Self.nonASCIIValue.count)")
+        #expect(failure == nil)
+        #expect(capabilityError == nil)
+        #expect(capabilityRoundTrips == true)
+        #expect(wireValueIsASCII == true)
+        #expect(wireValueDecodesToTheSentValue == true)
+        #expect(cleaned == true, "the throwaway bucket was left behind")
+    }
+
+    /// Review Focus 4 of the non-ASCII plan: a value long enough that ONE
+    /// encoded-word is far past RFC 2047's 75-character cap. `RFC2047.encodedWord`
+    /// emits one word of any length (the decoder accepts adjacent words), so
+    /// whether a store cares was **unmeasured** until this case.
+    ///
+    /// The value is 560 characters and 840 bytes of UTF-8, so its single
+    /// encoded-word is 1132 characters: 1120 of base64 and 12 of framing. The
+    /// encoded copy is sent first, by hand, so that the store's own answer
+    /// (status and `<Code>`) is on record; the capability then writes and reads
+    /// the same value back, and the case asserts that the decoded read-back
+    /// equals what was sent.
+    ///
+    /// **Measured 2026-11-10 on the rig:** the store ACCEPTS the one long word
+    /// (copy 200, no refusal code), so what is asserted is acceptance and the
+    /// round trip. Had it refused, the status and code it answered would have
+    /// been the measurement to assert instead.
+    @Test func aValueTooLongForOneEncodedWordRoundTrips() async throws {
+        let rig = try await MetadataRigBucket.make(purpose: "longvalue")
+        guard let rig else { return }
+        let value = Self.longNonASCIIValue
+        let encoded = RFC2047.encodedWord(value)
+
+        var failure: (any Error)?
+        var rawStatus: Int?
+        var rawCode: String?
+        var capabilityError: (any Error)?
+        var capabilityRoundTrips: Bool?
+        do {
+            _ = try await rig.put("long.txt", Data("n".utf8), contentType: "text/plain")
+            let (body, response) = try await rig.replaceCopy(
+                "long.txt", headers: ["content-type": "text/plain", "x-amz-meta-label": encoded])
+            rawStatus = response.statusCode
+            rawCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
+            let sent = ObjectMetadata(
+                contentType: "text/plain", cacheControl: nil, contentDisposition: nil,
+                custom: ["label": value], entityTag: nil)
+            do {
+                try await rig.fs.setMetadata(sent, ofKey: "long.txt", inBucket: rig.bucket)
+                let after = try await rig.fs.metadata(ofKey: "long.txt", inBucket: rig.bucket)
+                capabilityRoundTrips = after.custom["label"] == value
+            } catch {
+                capabilityError = error
+            }
+        } catch {
+            failure = error
+        }
+        let cleaned = await rig.teardown()
+
+        print(
+            "[S3MetadataGated] long non-ASCII custom value:"
+                + " sentCharacters=\(value.count) sentBytes=\(value.utf8.count)"
+                + " encodedCharacters=\(encoded.count)"
+                + " rawCopy=\(rawStatus.map(String.init) ?? "-") rawCode=\(rawCode ?? "-")"
+                + " capabilityThrew=\(capabilityError != nil)"
                 + " capabilityRoundTrips=\(capabilityRoundTrips.map(String.init) ?? "-")")
+        #expect(failure == nil)
+        #expect(encoded.count > 75, "the value no longer exceeds the encoded-word cap this case is about")
+        #expect(rawStatus == 200)
+        #expect(rawCode == nil)
+        #expect(capabilityError == nil)
+        #expect(capabilityRoundTrips == true)
+        #expect(cleaned == true, "the throwaway bucket was left behind")
+    }
+
+    /// Review Focus 2 of the non-ASCII plan: a value ANOTHER TOOL wrote, with
+    /// raw UTF-8 bytes in the header and no encoding, must read back through
+    /// the capability as what was typed, whichever form the store reports it
+    /// in. curl signs exactly the bytes it sends (`--aws-sigv4`), so the write
+    /// is accepted where the project's own signer's raw request is not, and
+    /// the store's answer to a `HEAD` is what macSCP's read path really meets.
+    ///
+    /// The write is run through `SubprocessRunner`, which awaits the child
+    /// without parking a cooperative-pool thread; the rig's credentials are
+    /// the fixture ones spelled in `S3SettingsRig.config` and
+    /// `docker/test-server/compose.yml`. Only the status and the refusal
+    /// `<Code>` of curl's answer are read, never a body.
+    ///
+    /// **What it asserts:** curl's copy is answered 200, and the capability's
+    /// read of the object returns the typed value. **What it prints and does
+    /// not assert:** whether the store reported the header encoded or raw to
+    /// the project's transport.
+    @Test func aValueAnotherToolWroteRawReadsBackThroughTheCapabilityAsTyped() async throws {
+        let rig = try await MetadataRigBucket.make(purpose: "rawcurl")
+        guard let rig else { return }
+
+        var failure: (any Error)?
+        var curlStatus: Int?
+        var curlCode: String?
+        var capabilityError: (any Error)?
+        var capabilityReadsAsTyped: Bool?
+        var wireValueIsAnEncodedWord: Bool?
+        var wireValueIsASCII: Bool?
+        do {
+            _ = try await rig.put("c.txt", Data("n".utf8), contentType: "text/plain")
+            let answer = try await rig.curlReplaceCopy(
+                "c.txt", headers: ["content-type": "text/plain", "x-amz-meta-label": Self.nonASCIIValue])
+            curlStatus = answer.status
+            curlCode = answer.code
+            do {
+                let after = try await rig.fs.metadata(ofKey: "c.txt", inBucket: rig.bucket)
+                capabilityReadsAsTyped = after.custom["label"] == Self.nonASCIIValue
+            } catch {
+                capabilityError = error
+            }
+            let head = try await rig.head("c.txt")
+            if let wire = head.value(forHTTPHeaderField: "x-amz-meta-label") {
+                wireValueIsAnEncodedWord = wire.hasPrefix("=?") && wire.hasSuffix("?=")
+                wireValueIsASCII = wire.unicodeScalars.allSatisfy { $0.value < 0x80 }
+            }
+        } catch {
+            failure = error
+        }
+        let cleaned = await rig.teardown()
+
+        print(
+            "[S3MetadataGated] non-ASCII custom value written raw by curl:"
+                + " curlCopy=\(curlStatus.map(String.init) ?? "-") curlCode=\(curlCode ?? "-")"
+                + " capabilityThrew=\(capabilityError != nil)"
+                + " capabilityReadsAsTyped=\(capabilityReadsAsTyped.map(String.init) ?? "-")"
+                + " storeReportsAnEncodedWord=\(wireValueIsAnEncodedWord.map(String.init) ?? "-")"
+                + " storeReportsASCII=\(wireValueIsASCII.map(String.init) ?? "-")")
+        #expect(failure == nil)
+        #expect(curlStatus == 200)
+        #expect(capabilityError == nil)
+        #expect(capabilityReadsAsTyped == true)
+        #expect(cleaned == true, "the throwaway bucket was left behind")
+    }
+
+    /// **A canary, and the part of the old record that is still true.** A
+    /// non-ASCII header value handed raw to the project's own signer and
+    /// transport, bypassing the capability, is what used to be answered 403
+    /// `SignatureDoesNotMatch` (see the withdrawn record in
+    /// `aCustomMetadataValueOutsideASCIIRoundTripsThroughTheCapability`'s doc
+    /// comment). The capability no longer sends such a request, so this is no
+    /// user-visible defect; it is the reason the encoding exists. If this ever
+    /// stops being refused, the signer and the transport have been made to
+    /// agree on a raw non-ASCII value, and the encoding wants revisiting
+    /// rather than assuming.
+    ///
+    /// **What it asserts:** the raw request is refused, as 403
+    /// `SignatureDoesNotMatch`, which is what was measured on 2026-11-04 and
+    /// again on 2026-11-10 on the same rig, and that nothing was stored raw.
+    @Test func aRawNonASCIIHeaderFromTheProjectsOwnSignerIsStillRefused() async throws {
+        let rig = try await MetadataRigBucket.make(purpose: "rawsigner")
+        guard let rig else { return }
+
+        var failure: (any Error)?
+        var copyStatus: Int?
+        var refusalCode: String?
+        var rawRoundTrips: Bool?
+        do {
+            _ = try await rig.put("r.txt", Data("n".utf8), contentType: "text/plain")
+            let (body, response) = try await rig.replaceCopy(
+                "r.txt",
+                headers: ["content-type": "text/plain", "x-amz-meta-label": Self.nonASCIIValue])
+            copyStatus = response.statusCode
+            // Only the `<Code>` is read out, never the body: a refusal body of
+            // this shape can name the request's own signing material.
+            refusalCode = S3VersionsGatedTests.element("Code", in: String(decoding: body, as: UTF8.self))
+            let head = try await rig.head("r.txt")
+            rawRoundTrips = head.value(forHTTPHeaderField: "x-amz-meta-label") == Self.nonASCIIValue
+        } catch {
+            failure = error
+        }
+        let cleaned = await rig.teardown()
+
+        print(
+            "[S3MetadataGated] non-ASCII custom value, raw through the project's signer:"
+                + " copy=\(copyStatus.map(String.init) ?? "-") refusalCode=\(refusalCode ?? "-")"
+                + " rawRoundTrips=\(rawRoundTrips.map(String.init) ?? "-")")
         #expect(failure == nil)
         #expect(copyStatus == 403)
         #expect(refusalCode == "SignatureDoesNotMatch")
         #expect(rawRoundTrips == false)
-        #expect(capabilityError != nil)
-        #expect(capabilityErrorIsAuthenticationFailed == true)
-        #expect(capabilityRoundTrips == nil)
         #expect(cleaned == true, "the throwaway bucket was left behind")
     }
 
@@ -881,6 +1099,41 @@ private struct MetadataRigBucket {
         extra["x-amz-metadata-directive"] = "REPLACE"
         return try await S3SettingsRig.objectRequest(
             "PUT", bucket: bucket, key: key, extraHeaders: extra, body: Data(), in: fs)
+    }
+
+    /// The same metadata `REPLACE` copy, sent by curl's own SigV4 instead of
+    /// this project's signer: curl signs exactly the bytes it puts on the
+    /// wire, so a raw non-ASCII header value reaches the store the way
+    /// another tool would send it. Awaited through `SubprocessRunner`, which
+    /// parks no cooperative-pool thread. Returns the status and the refusal
+    /// `<Code>` (nil on success); the body is never returned.
+    func curlReplaceCopy(_ key: String, headers: [String: String]) async throws
+        -> (status: Int, code: String?)
+    {
+        let config = Self.config
+        let url = "\(config.endpoint)/\(bucket)/\(key)"
+        var arguments = [
+            "--silent", "--show-error", "--request", "PUT", "--data-binary", "",
+            "--aws-sigv4", "aws:amz:\(config.region):s3",
+            "--user", "\(config.accessKeyID):\(config.secretAccessKey)",
+            "--header", "x-amz-copy-source: /\(bucket)/\(key)",
+            "--header", "x-amz-metadata-directive: REPLACE",
+        ]
+        for (name, value) in headers.sorted(by: { $0.key < $1.key }) {
+            arguments += ["--header", "\(name): \(value)"]
+        }
+        arguments += ["--write-out", "\n%{http_code}", url]
+        // A deadline handed to the child is a ceiling the test did not choose
+        // to assert on (CLAUDE.md, "A wall-clock ceiling in a test measures
+        // the runner"), so it is the generous figure the loopback FTP cases
+        // use.
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/curl"), arguments: arguments, timeout: .seconds(600))
+        let text = result.stdoutText
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let status = lines.last.flatMap { Int($0) } ?? -1
+        let body = lines.dropLast().joined(separator: "\n")
+        return (status, S3VersionsGatedTests.element("Code", in: body))
     }
 
     func head(_ key: String) async throws -> HTTPURLResponse {
