@@ -34,8 +34,10 @@ import Testing
             == "Jahresübersicht")
     }
 
-    /// Review Focus 2: a store that answers with the raw bytes, and any value
+    /// Review Focus 2: a store that answers with the raw value, and any value
     /// that is simply not an encoded word, survives the decoder untouched.
+    /// What text raw non-ASCII header bytes become before they reach the
+    /// decoder is the transport's step, and it is unmeasured.
     @Test func anythingThatIsNotAnEncodedWordPassesThrough() {
         #expect(RFC2047.decoded("Jahresübersicht") == "Jahresübersicht")
         #expect(RFC2047.decoded("attachment; filename=\"report.pdf\"")

@@ -726,7 +726,8 @@ struct S3MetadataGatedTests {
     /// the same value back, and the case asserts that the decoded read-back
     /// equals what was sent. "Hand" in the names `handStatus`, `handCode` and
     /// the printed `handCopy=` means sent by hand and already encoded; it does
-    /// NOT mean a raw non-ASCII value, which only the canary below sends.
+    /// NOT mean a raw non-ASCII value, which the curl case and the canary
+    /// below send.
     ///
     /// **Measured 2026-11-10 on the rig:** the store ACCEPTS the one long word
     /// (copy 200, no refusal code), so what is asserted is acceptance and the

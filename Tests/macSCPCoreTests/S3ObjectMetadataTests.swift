@@ -498,8 +498,10 @@ struct S3ObjectMetadataTests {
         #expect(metadata.custom.count == 1)
     }
 
-    /// A store (or another tool) that kept raw bytes: what it answers is what
-    /// the caller gets, untouched.
+    /// A store (or another tool) that kept the value raw: what it answers is
+    /// what the caller gets, untouched. The fake hands over text, so this
+    /// starts after the transport's bytes-to-text step, which is unmeasured
+    /// for raw non-ASCII bytes.
     @Test func aRawNonASCIIValueInTheHeadAnswerReachesTheCallerUnchanged() async throws {
         let (fs, _) = try await S3SettingsFake.connect(responses: [
             Self.head(["x-amz-meta-note": Self.typedNonASCII])
