@@ -1,0 +1,93 @@
+import Foundation
+import Testing
+
+@testable import macSCPCore
+
+/// `RFC2047` puts a custom metadata value on the wire as pure ASCII and reads
+/// it back. The review focus numbers in the comments below are those of the
+/// plan these tests were written for.
+@Suite struct RFC2047Tests {
+    @Test func anASCIIValueIsReturnedUnchanged() {
+        #expect(RFC2047.encodedWord("max-age=60, must-revalidate")
+            == "max-age=60, must-revalidate")
+        #expect(RFC2047.encodedWord("") == "")
+        #expect(RFC2047.encodedWord("   ") == "   ")
+    }
+
+    @Test func aNonASCIIValueBecomesOneBase64EncodedWord() {
+        #expect(RFC2047.encodedWord("Jahresübersicht")
+            == "=?UTF-8?B?SmFocmVzw7xiZXJzaWNodA==?=")
+    }
+
+    @Test func anEncodedWordDecodesToTheBytesItCarries() {
+        #expect(RFC2047.decoded("=?UTF-8?B?SmFocmVzw7xiZXJzaWNodA==?=")
+            == "Jahresübersicht")
+    }
+
+    @Test func theQEncodingIsDecodedToo() {
+        #expect(RFC2047.decoded("=?UTF-8?Q?Jahres=C3=BCbersicht?=") == "Jahresübersicht")
+        #expect(RFC2047.decoded("=?UTF-8?Q?a_b?=") == "a b")
+    }
+
+    @Test func adjacentEncodedWordsAreJoined() {
+        #expect(RFC2047.decoded("=?UTF-8?B?SmFocmVz?= =?UTF-8?B?w7xiZXJzaWNodA==?=")
+            == "Jahresübersicht")
+    }
+
+    /// Review Focus 2: a store that answers with the raw bytes, and any value
+    /// that is simply not an encoded word, survives the decoder untouched.
+    @Test func anythingThatIsNotAnEncodedWordPassesThrough() {
+        #expect(RFC2047.decoded("Jahresübersicht") == "Jahresübersicht")
+        #expect(RFC2047.decoded("attachment; filename=\"report.pdf\"")
+            == "attachment; filename=\"report.pdf\"")
+        #expect(RFC2047.decoded("=?UTF-8?B?not valid base64!?=")
+            == "=?UTF-8?B?not valid base64!?=")
+        #expect(RFC2047.decoded("=?SHIFT_JIS?B?gqA=?=") == "=?SHIFT_JIS?B?gqA=?=")
+    }
+
+    /// Review Focus 1: what the person typed comes back, even when what they
+    /// typed looks like an encoded word. The encoder treats it as text.
+    @Test func aValueThatLooksLikeAnEncodedWordRoundTripsLiterally() {
+        let typed = "=?UTF-8?B?SGk=?="
+        let round = RFC2047.decoded(RFC2047.encodedWord(typed))
+        #expect(round == typed)
+    }
+
+    /// Review Focus 4: one word of any length, and the round trip holds.
+    @Test func aLongValueRoundTrips() {
+        let typed = String(repeating: "übersicht-日本語-", count: 40)
+        #expect(RFC2047.decoded(RFC2047.encodedWord(typed)) == typed)
+    }
+
+    /// The encoder's output is pure ASCII for every input, including an
+    /// ASCII input that only looks like an encoded word. The Bool is computed
+    /// first so a failing run does not print the value.
+    @Test func theEncodedFormIsAlwaysPureASCII() {
+        for typed in ["Jahresübersicht", "=?UTF-8?B?SGk=?=", "a =? b", "日本語"] {
+            let ascii = RFC2047.encodedWord(typed).unicodeScalars.allSatisfy { $0.value < 0x80 }
+            #expect(ascii)
+        }
+    }
+
+    /// Text between two words is kept; only whitespace-only gaps vanish.
+    @Test func textBetweenEncodedWordsIsKeptVerbatim() {
+        #expect(RFC2047.decoded("=?UTF-8?Q?a?= and =?UTF-8?Q?b?=") == "a and b")
+        #expect(RFC2047.decoded("x =?UTF-8?Q?a?= y") == "x a y")
+    }
+
+    /// The charset and the encoding letter are matched without regard to case.
+    @Test func charsetAndEncodingAreCaseInsensitive() {
+        #expect(RFC2047.decoded("=?utf-8?b?SGk=?=") == "Hi")
+        #expect(RFC2047.decoded("=?utf-8?q?H=69?=") == "Hi")
+    }
+
+    /// A word that does not decode stays as it stands, and a later good word
+    /// still decodes.
+    @Test func aMalformedWordDoesNotSpoilItsNeighbours() {
+        #expect(RFC2047.decoded("=?UTF-8?X?SGk=?= =?UTF-8?B?SGk=?=")
+            == "=?UTF-8?X?SGk=?= Hi")
+        #expect(RFC2047.decoded("=?UTF-8?Q?bad=ZZ?=") == "=?UTF-8?Q?bad=ZZ?=")
+        #expect(RFC2047.decoded("=?UTF-8?B?/w==?=") == "=?UTF-8?B?/w==?=")
+        #expect(RFC2047.decoded("=?") == "=?")
+    }
+}
