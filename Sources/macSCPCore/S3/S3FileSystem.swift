@@ -2783,7 +2783,8 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// the three standard fields that has a value, and one prefixed header per
     /// custom pair. A field left `nil` is NOT sent, which is what makes the
     /// replace drop it. Custom names are lower-cased, as the store reports
-    /// them.
+    /// them. A custom value that is not plain ASCII is sent as an encoded
+    /// word (`RFC2047`); the rest go out as they are.
     ///
     /// Refused with `metadataFieldRefusedReason`, before anything is sent: a
     /// value with a control character (a line break would end the header and
@@ -2806,13 +2807,22 @@ extension S3FileSystem: ObjectMetadataProvider {
             }
             headers[name] = value
         }
+        // A custom value is put on the wire as an RFC 2047 encoded word when it
+        // is not plain ASCII, and the sendability check below runs on that
+        // wire form, which is what the signer will see. The reason is that a
+        // custom-metadata header is the one place a store's signature check
+        // refuses raw non-ASCII bytes. The three standard fields above are
+        // different: they are read and written as the person typed them, were
+        // never encoded, and are not decoded on the way back; how they carry
+        // non-ASCII text is a separate matter and is not decided here.
         for (name, value) in metadata.custom {
+            let wireValue = RFC2047.encodedWord(value)
             guard headerNameIsToken(name), !name.lowercased().hasPrefix(customMetadataHeaderPrefix),
-                headerValueIsSendable(value)
+                headerValueIsSendable(wireValue)
             else {
                 throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
             }
-            headers[customMetadataHeaderPrefix + name.lowercased()] = value
+            headers[customMetadataHeaderPrefix + name.lowercased()] = wireValue
         }
         return headers
     }
@@ -2833,6 +2843,12 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// without regard to case; the custom ones lose the transport prefix and
     /// are kept lower-cased. An answer with the prefix and nothing after it
     /// names no key and is not read as one.
+    ///
+    /// **A custom value comes back decoded**, so `ObjectMetadata.custom`
+    /// always holds the text a person reads: a value written as an encoded
+    /// word reads as the text inside it, and one the store kept as raw bytes
+    /// is passed through unchanged. The three standard fields are returned as
+    /// received; they were never encoded.
     private static func objectMetadata(from response: HTTPURLResponse) -> ObjectMetadata {
         var custom: [String: String] = [:]
         for (rawName, rawValue) in response.allHeaderFields {
@@ -2840,7 +2856,7 @@ extension S3FileSystem: ObjectMetadataProvider {
                 name.hasPrefix(customMetadataHeaderPrefix)
             else { continue }
             let key = String(name.dropFirst(customMetadataHeaderPrefix.count))
-            if !key.isEmpty { custom[key] = value }
+            if !key.isEmpty { custom[key] = RFC2047.decoded(value) }
         }
         return ObjectMetadata(
             contentType: response.value(forHTTPHeaderField: "Content-Type"),
@@ -2857,7 +2873,9 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// default one to an object that has none (not measured on the rig, so
     /// not assumed either way). The custom pairs must be equal as a whole, so
     /// a pair that survived the `REPLACE` is as much a disagreement as one
-    /// that went missing. The entity tag is deliberately NOT compared: spec
+    /// that went missing. `actual` has already been decoded by the read that
+    /// produced it, so a custom value is compared as text against what was
+    /// typed, never as a wire form. The entity tag is deliberately NOT compared: spec
     /// section 4.5 measured it unchanged by a metadata copy, the bytes being
     /// the same.
     private static func metadata(_ actual: ObjectMetadata, confirms sent: ObjectMetadata) -> Bool {

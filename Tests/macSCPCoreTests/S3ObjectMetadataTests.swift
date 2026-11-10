@@ -384,6 +384,98 @@ struct S3ObjectMetadataTests {
         #expect(await Self.sent(transport).count == 1)
     }
 
+    // MARK: - Non-ASCII custom values: encoded on the wire, decoded on the way back
+
+    /// A value with one non-ASCII scalar (u with diaeresis), spelled by escape
+    /// so the file itself stays ASCII. Its UTF-8 bytes are 4D C3 BC 6C 6C 65 72.
+    static let typedNonASCII = "M\u{00FC}ller"
+    /// The same value as the store returns it after an encoded write.
+    static let typedNonASCIIAsEncodedWord = "=?UTF-8?B?TcO8bGxlcg==?="
+
+    private static func noteOnly(_ value: String) -> ObjectMetadata {
+        ObjectMetadata(
+            contentType: nil, cacheControl: nil, contentDisposition: nil,
+            custom: ["note": value], entityTag: nil)
+    }
+
+    /// The point of the whole change: a raw non-ASCII byte in a signed header
+    /// is what made the store answer `SignatureDoesNotMatch`. Every
+    /// expectation here is a precomputed `Bool`, because the report of a
+    /// failed expectation prints the value it evaluated, and the value under
+    /// test carries the non-ASCII this test is about.
+    @Test func aNonASCIICustomValueIsSentAsAnEncodedWord() async throws {
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.copied, Self.head(["x-amz-meta-note": Self.typedNonASCIIAsEncodedWord]),
+        ])
+
+        try await fs.setMetadata(
+            Self.noteOnly(Self.typedNonASCII), ofKey: "a.txt", inBucket: Self.bucket)
+
+        let put = try #require(await Self.sent(transport).first)
+        let sent = try #require(put.value(forHTTPHeaderField: "x-amz-meta-note"))
+        let isASCII = sent.unicodeScalars.allSatisfy { $0.value < 0x80 }
+        let isTheEncodedWord = sent == Self.typedNonASCIIAsEncodedWord
+        #expect(isASCII)
+        #expect(isTheEncodedWord)
+        // Signed with that header, which is what makes the store agree.
+        let authorization = try #require(put.value(forHTTPHeaderField: "Authorization"))
+        #expect(authorization.contains("x-amz-meta-note"))
+    }
+
+    @Test func anEncodedWordInTheHeadAnswerReachesTheCallerDecoded() async throws {
+        let (fs, _) = try await S3SettingsFake.connect(responses: [
+            Self.head(["x-amz-meta-note": Self.typedNonASCIIAsEncodedWord])
+        ])
+
+        let metadata = try await fs.metadata(ofKey: "a.txt", inBucket: Self.bucket)
+
+        let decodedToTheTypedText = metadata.custom["note"] == Self.typedNonASCII
+        #expect(decodedToTheTypedText)
+        #expect(metadata.custom.count == 1)
+    }
+
+    /// A store (or another tool) that kept raw bytes: what it answers is what
+    /// the caller gets, untouched.
+    @Test func aRawNonASCIIValueInTheHeadAnswerReachesTheCallerUnchanged() async throws {
+        let (fs, _) = try await S3SettingsFake.connect(responses: [
+            Self.head(["x-amz-meta-note": Self.typedNonASCII])
+        ])
+
+        let metadata = try await fs.metadata(ofKey: "a.txt", inBucket: Self.bucket)
+
+        let unchanged = metadata.custom["note"] == Self.typedNonASCII
+        #expect(unchanged)
+    }
+
+    /// What the person sees: the write is confirmed. The store answers the
+    /// read-back with the ENCODED word, which is what rustfs was measured
+    /// returning, and the comparison finds it equal to what was typed.
+    @Test func aNonASCIIValueWrittenAndReadBackIsConfirmed() async throws {
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.copied, Self.head(["x-amz-meta-note": Self.typedNonASCIIAsEncodedWord]),
+        ])
+
+        try await fs.setMetadata(
+            Self.noteOnly(Self.typedNonASCII), ofKey: "a.txt", inBucket: Self.bucket)
+
+        let methods = await Self.sent(transport).map(\.httpMethod)
+        #expect(methods == ["PUT", "HEAD"])
+    }
+
+    /// The control that keeps the confirmation honest: a read-back that holds
+    /// some OTHER text is still an unconfirmed write, decoded or not.
+    @Test func aReadBackHoldingOtherTextThanWasTypedIsStillUnconfirmed() async throws {
+        let other = "=?UTF-8?B?TcO8bGxlcnM=?="
+        let (fs, _) = try await S3SettingsFake.connect(responses: [
+            Self.copied, Self.head(["x-amz-meta-note": other]),
+        ])
+
+        await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.setMetadataUnconfirmedReason)) {
+            try await fs.setMetadata(
+                Self.noteOnly(Self.typedNonASCII), ofKey: "a.txt", inBucket: Self.bucket)
+        }
+    }
+
     // MARK: - Writing: a refusal for size is the store's own
 
     /// Spec section 4.10 measured a single-part copy of 8 MiB and nothing
