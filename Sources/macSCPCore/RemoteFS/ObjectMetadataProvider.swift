@@ -10,7 +10,8 @@ public struct ObjectMetadata: Sendable, Equatable {
     /// Keys WITHOUT the `x-amz-meta-` prefix, which is transport. The prefix
     /// is added when a request is built and stripped when an answer is read,
     /// so a value of this type never carries it and a caller never has to
-    /// know it exists.
+    /// know it exists. The values are the decoded text a person reads, never
+    /// a wire form.
     public var custom: [String: String]
     /// The object's entity tag as read, kept as received. A read-only
     /// witness, not an input: nothing writes it, which is why it is `let`

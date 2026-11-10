@@ -2783,8 +2783,8 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// the three standard fields that has a value, and one prefixed header per
     /// custom pair. A field left `nil` is NOT sent, which is what makes the
     /// replace drop it. Custom names are lower-cased, as the store reports
-    /// them. A custom value that is not plain ASCII is sent as an encoded
-    /// word (`RFC2047`); the rest go out as they are.
+    /// them. A custom value goes out as `RFC2047.encodedWord(_:)` writes it;
+    /// that function owns the rule for which values are encoded.
     ///
     /// Refused with `metadataFieldRefusedReason`, before anything is sent: a
     /// value with a control character (a line break would end the header and
@@ -2792,11 +2792,12 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// as well as on its wire form, because the encoded form hides it), a
     /// value of one of the three standard fields that is not plain ASCII
     /// (those are token-valued and never encoded; the sheet names the field
-    /// before this is reached), a custom name that is empty or is not an HTTP token,
-    /// and a custom name that already carries the transport prefix in any
-    /// case (`ObjectMetadata.custom` says its keys do not; sent as it is, the
-    /// key would be prefixed twice and read back under another name than the
-    /// one sent). The reason is fixed text and never carries the key.
+    /// before this is reached), a custom name that is empty or is not an
+    /// HTTP token, and a custom name that already carries the transport
+    /// prefix in any case (`ObjectMetadata.custom` says its keys do not; sent
+    /// as it is, the key would be prefixed twice and read back under another
+    /// name than the one sent). The reason is fixed text and never carries
+    /// the key.
     private static func replacementHeaders(for metadata: ObjectMetadata) throws -> [String: String] {
         var headers = ["x-amz-metadata-directive": "REPLACE"]
         let standard = [
@@ -2811,20 +2812,21 @@ extension S3FileSystem: ObjectMetadataProvider {
             }
             headers[name] = value
         }
-        // A custom value is put on the wire as an RFC 2047 encoded word when it
-        // is not plain ASCII, and the sendability check below runs on that
-        // wire form, which is what the signer will see, and on the value as
-        // typed, because an encoded word is base64 and would hide a control
-        // character. The reason for the encoding: on 2026-11-04 a store
-        // (RustFS) was measured to answer a custom value sent as raw
-        // non-ASCII bytes with a signature failure, which the person reads as
-        // a credentials problem. That measurement was made for custom values;
-        // the backlog row "A non-ASCII metadata value in ANY of the four field
-        // classes is reported to the user as a credentials problem, and the
-        // fix has TWO layers" records that the standard fields share the
-        // defect. They cannot be encoded the same way: they are token-valued,
-        // are returned as received, and are therefore refused above when the
-        // value is not plain ASCII.
+        // A custom value goes on the wire as `RFC2047.encodedWord(_:)` writes
+        // it, and the sendability check below runs on that wire form, which
+        // is what the signer will see, and on the value as typed, because an
+        // encoded word is base64 and would hide a control character. The
+        // reason for the encoding: on 2026-11-04 a store (RustFS) was
+        // measured to answer a custom value sent as raw non-ASCII bytes with
+        // a signature failure, which the person reads as a credentials
+        // problem. That measurement was made for custom values; the backlog
+        // row "A non-ASCII metadata value in ANY of the four field classes is
+        // reported to the user as a credentials problem, and the fix has TWO
+        // layers" recorded that the standard fields shared the defect, and
+        // that half of the row was closed by the refusal above. They cannot
+        // be encoded the same way: they are token-valued, are returned as
+        // received, and are therefore refused above when the value is not
+        // plain ASCII.
         for (name, value) in metadata.custom {
             let wireValue = RFC2047.encodedWord(value)
             guard headerNameIsToken(name), !name.lowercased().hasPrefix(customMetadataHeaderPrefix),
@@ -2860,9 +2862,10 @@ extension S3FileSystem: ObjectMetadataProvider {
     ///
     /// **A custom value comes back decoded**, so `ObjectMetadata.custom`
     /// always holds the text a person reads: a value written as an encoded
-    /// word reads as the text inside it, and one the store kept as raw bytes
-    /// is passed through unchanged. The three standard fields are returned as
-    /// received; they were never encoded.
+    /// word reads as the text inside it, and text that is not an encoded word
+    /// is passed through unchanged (what the transport hands over for a raw
+    /// non-ASCII header is unmeasured; see `RFC2047.decoded(_:)`). The three
+    /// standard fields are returned as received; they were never encoded.
     private static func objectMetadata(from response: HTTPURLResponse) -> ObjectMetadata {
         var custom: [String: String] = [:]
         for (rawName, rawValue) in response.allHeaderFields {
@@ -2889,9 +2892,9 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// a pair that survived the `REPLACE` is as much a disagreement as one
     /// that went missing. `actual` has already been decoded by the read that
     /// produced it, so a custom value is compared as text against what was
-    /// typed, never as a wire form. The entity tag is deliberately NOT compared: spec
-    /// section 4.5 measured it unchanged by a metadata copy, the bytes being
-    /// the same.
+    /// typed, never as a wire form. The entity tag is deliberately NOT
+    /// compared: spec section 4.5 measured it unchanged by a metadata copy,
+    /// the bytes being the same.
     private static func metadata(_ actual: ObjectMetadata, confirms sent: ObjectMetadata) -> Bool {
         if let type = sent.contentType, actual.contentType != type { return false }
         guard actual.cacheControl == sent.cacheControl,
