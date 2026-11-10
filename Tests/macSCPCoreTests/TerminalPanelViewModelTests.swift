@@ -1152,6 +1152,68 @@ struct TerminalPanelViewModelDeliveryTests {
         #expect(secondDelivered.count == 0)
     }
 
+    /// A refused paste followed by an accepted small command would leave a
+    /// gap: the command would reach the shell without the text typed before
+    /// it. So the first refusal of an attempt refuses everything after it,
+    /// whatever its size, and what was accepted before it is still delivered.
+    @Test func afterARefusedSendASmallSendOfTheSameAttemptIsRefusedToo() async throws {
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+
+        let beforeDelivered = Box()
+        let afterDelivered = Box()
+        let before = vm.send([UInt8](repeating: 1, count: 60_000)) { beforeDelivered.bump() }
+        let refused = vm.send([UInt8](repeating: 2, count: 10_000))
+        // Small enough to fit in the 4_096 bytes still free: the latch, not
+        // the cap, is what refuses it.
+        let after = vm.send(Array("rm *\r".utf8)) { afterDelivered.bump() }
+        let results = [before, refused, after]
+        #expect(results == [true, false, false])
+        #expect(vm.inputRefused)
+
+        gate.open()
+        await beforeDelivered.waitForFirstDelivery()
+        // The prefix accepted before the refusal arrives, whole, and nothing
+        // else does.
+        #expect(shell.sent.flatMap { $0 } == [UInt8](repeating: 1, count: 60_000))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(afterDelivered.count == 0)
+    }
+
+    @Test func theLatchClearsOnTheNextAttempt() async throws {
+        struct OpenFailure: Error {}
+        let attempts = Counter()
+        let shell = MockShell()
+        let gate = OpenGate()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            await attempts.increment()
+            if await attempts.value == 1 { throw OpenFailure() }
+            try await gate.waitUntilOpened()
+            return shell
+        })
+        vm.openIfNeeded()
+        let refused = vm.send([UInt8](repeating: 1, count: 64 * 1024 + 1))
+        let latched = vm.send([0x61])
+        #expect(refused == false)
+        #expect(latched == false)
+        try await pollUntil("the panel ended") {
+            if case .ended = vm.state { return true } else { return false }
+        }
+
+        vm.openIfNeeded()
+        let delivered = Box()
+        let fresh = vm.send(Array("ls\r".utf8)) { delivered.bump() }
+        #expect(fresh)
+        gate.open()
+        await delivered.waitForFirstDelivery()
+        #expect(shell.sent.flatMap { $0 } == Array("ls\r".utf8))
+    }
+
     @Test func aSendThatFillsTheBufferExactlyIsAcceptedAndRefusesNothing() async throws {
         let shell = MockShell()
         let gate = OpenGate()

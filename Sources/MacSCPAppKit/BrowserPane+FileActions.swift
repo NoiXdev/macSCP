@@ -41,6 +41,53 @@ struct FileActionShell {
     let refusedInput: () -> Bool
 }
 
+/// How typing a file action's lines into the shell ended.
+enum FileActionTypingOutcome: Equatable {
+    /// Every line was handed to the terminal, or the planner declined to
+    /// send one (which it does only for an insert, never for these lines).
+    case typed
+    /// The tab has no shell to type into.
+    case noShell
+    /// The terminal refused a line because its opening buffer could not hold
+    /// it. That line was NOT typed and neither was anything after it.
+    case refusedByTerminal
+}
+
+extension FileActionShell {
+    /// Sends each line, in order, as a snippet's Execute would, and stops at
+    /// the first line the terminal does not take.
+    ///
+    /// Every line goes through `SnippetSendPlanner`, the decision the
+    /// snippet surfaces share, and its bytes reach the shell unchanged: a
+    /// control character in a prompted value is kept, because the
+    /// confirmation sheet drew it as a marker. Dropping or normalising it
+    /// here would make the sheet and the shell disagree about what ran. The
+    /// same character in a SELECTION-derived value never gets here:
+    /// `FileActionPlanner` refuses it, since these lines are typed and the
+    /// line editor acts on a C0 byte whatever quotes surround it.
+    ///
+    /// Stopping is the point: a later, shorter line must not be typed
+    /// without the refused one before it. A refused line is told apart from
+    /// a missing shell by `refusedInput`, read after `type` returned `false`.
+    func typeLines(_ lines: [String]) -> FileActionTypingOutcome {
+        let bracketedPaste = wantsBracketedPaste()
+        for line in lines {
+            switch SnippetSendPlanner.plan(
+                command: line, execute: true, bracketedPaste: bracketedPaste)
+            {
+            case .send(let bytes):
+                guard type(bytes) else {
+                    return refusedInput() ? .refusedByTerminal : .noShell
+                }
+            case .refusedMultilineInsert:
+                // Only an insert is ever refused, and this sends with execute.
+                return .typed
+            }
+        }
+        return .typed
+    }
+}
+
 extension BrowserPane {
     /// Builds the plan and opens the confirmation sheet. **Nothing runs
     /// here** — the sheet's confirm button is what starts it, through
@@ -108,43 +155,24 @@ extension BrowserPane {
         }
     }
 
-    /// Sends each line, in order, as a snippet's Execute would.
-    ///
-    /// Every line goes through `SnippetSendPlanner`, the decision the
-    /// snippet surfaces share, and its bytes reach the shell unchanged: a
-    /// control character in a prompted value is kept, because the
-    /// confirmation sheet drew it as a marker. Dropping or normalising it
-    /// here would make the sheet and the shell disagree about what ran. The
-    /// same character in a SELECTION-derived value never gets here:
-    /// `FileActionPlanner` refuses it, since these lines are typed and the
-    /// line editor acts on a C0 byte whatever quotes surround it.
-    ///
-    /// A failure of one line does not stop the rest: nothing reads the
-    /// shell's output, so there is nothing to decide on.
+    /// Types the lines into the tab's shell and says why not when it cannot.
+    /// The loop, and the reason a line stops it, are
+    /// `FileActionShell.typeLines(_:)`'s.
     private func typeIntoShell(_ lines: [String]) {
         guard let shell else {
             fileActionAlertMessage = Self.noShellSentence
             return
         }
-        let bracketedPaste = shell.wantsBracketedPaste()
-        for line in lines {
-            switch SnippetSendPlanner.plan(
-                command: line, execute: true, bracketedPaste: bracketedPaste)
-            {
-            case .send(let bytes):
-                guard shell.type(bytes) else {
-                    // Stops here either way: a later, shorter line must not
-                    // be typed without this one. Only the first reason is
-                    // an alert; the second is the terminal panel's sentence.
-                    if !shell.refusedInput() {
-                        fileActionAlertMessage = Self.noShellSentence
-                    }
-                    return
-                }
-            case .refusedMultilineInsert:
-                // Only an insert is ever refused, and this sends with execute.
-                return
-            }
+        switch shell.typeLines(lines) {
+        case .typed:
+            return
+        case .noShell:
+            fileActionAlertMessage = Self.noShellSentence
+        case .refusedByTerminal:
+            // No alert: the terminal panel shows its own sentence while the
+            // refusal holds (`TerminalPanelViewModel.inputRefused`), and
+            // "this connection has none" would be false of it.
+            return
         }
     }
 

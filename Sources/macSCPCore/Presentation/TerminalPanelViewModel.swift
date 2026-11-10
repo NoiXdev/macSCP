@@ -63,6 +63,15 @@ public final class TerminalPanelViewModel {
     /// attempt because the opening buffer could not hold it, so the panel
     /// can say so instead of the input vanishing.
     ///
+    /// It is also a latch, not only a report: once a send has been refused,
+    /// every later `send` of the same attempt is refused too, whatever its
+    /// size. A refused paste followed by a small accepted command would
+    /// leave a gap in the input -- the command would reach the shell
+    /// without the text the user typed before it, and run in a context the
+    /// user never saw form. What was accepted BEFORE the first refusal stays
+    /// queued and is delivered: it is a whole prefix, with nothing missing
+    /// in front of it.
+    ///
     /// Belongs to the same open attempt as `pendingBytes` and is reset at
     /// the same points: when an open starts, when one fails, when the shell
     /// ends, and on `shutdown()` (all through `discardPendingInput()`), and
@@ -430,7 +439,10 @@ public final class TerminalPanelViewModel {
     /// as it runs (see `pendingBytes`), unless they do not fit in what is
     /// left of the buffer: then the WHOLE call is refused -- no prefix is
     /// kept, `onDelivered` is never recorded, and `inputRefused` turns on.
-    /// In every other shell-less state (`.closed`, `.ended`) the bytes are
+    /// From then on every further call of the same open attempt is refused
+    /// the same way, however small, so the input never has a gap; the bytes
+    /// accepted before the first refusal are still delivered. In every other
+    /// shell-less state (`.closed`, `.ended`) the bytes are
     /// dropped: nothing is on its way that could ever deliver them.
     ///
     /// Returns whether the bytes were taken: `true` when they were handed to
@@ -444,6 +456,8 @@ public final class TerminalPanelViewModel {
     public func send(_ bytes: [UInt8], onDelivered: (@MainActor () -> Void)? = nil) -> Bool {
         guard let shell else {
             guard state == .opening else { return false }
+            // The latch: see `inputRefused`.
+            guard !inputRefused else { return false }
             guard bytes.count <= Self.maxPendingBytes - pendingBytes.count else {
                 inputRefused = true
                 return false
