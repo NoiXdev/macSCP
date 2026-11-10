@@ -228,7 +228,8 @@ final class LoopbackFTPState: Sendable {
 /// key pair is minted at runtime, held in memory, and nothing is ever
 /// committed as key material.
 ///
-/// Credentials are generated per instance (`credentials`).
+/// Credentials are generated per instance by default (`credentials`); a case
+/// about the login the dial composes passes its own pair.
 actor LoopbackFTPServer {
     let credentials: LoopbackFTPCredentials
 

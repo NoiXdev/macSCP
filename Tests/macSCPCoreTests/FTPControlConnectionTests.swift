@@ -651,6 +651,22 @@ struct FTPControlConnectionTests {
         #expect(await server.receivedCommands.first { $0.verb == "USER" }?.argument == "anonymous")
     }
 
+    /// The literal name `anonymous` with a STORED password sends that
+    /// password, not the placeholder: the placeholder fills a blank and
+    /// replaces nothing a person provided. The server accepts only this pair,
+    /// so the placeholder going out instead is a refused login.
+    @Test func aUserNameOfAnonymousWithAStoredPasswordSendsThatPassword() async throws {
+        let stored = LoopbackFTPCredentials().password
+        let server = Self.server(accepting: "anonymous", password: stored)
+        let outcome = try await Self.running(server) { host, port in
+            await Self.dial(
+                server, host: host, port: port, security: .plain, password: stored,
+                username: "anonymous")
+        }
+        #expect(outcome == .connected)
+        #expect(await server.receivedCommands.first { $0.verb == "USER" }?.argument == "anonymous")
+    }
+
     /// Only the empty string is the anonymous login. A name of nothing but
     /// whitespace is sent as typed: the dial does not rewrite what the
     /// person entered except in the one case, and a server that wants
