@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 @testable import macSCPCore
@@ -29,6 +30,24 @@ struct PlaintextConfirmationBodyTests {
         let namesFTPS = text.contains("FTPS")
         #expect(namesBoth)
         #expect(namesFTPS == false)
+    }
+
+    /// Each catalog key is spelled once in the type, so the key a sentence is
+    /// looked up under and the key `key(for:)` reports cannot drift apart.
+    /// The count is over the comment-free view, string literals kept; the
+    /// quote on both sides keeps the shorter key from matching inside the
+    /// longer one. The positive control is the pair of counts being exactly
+    /// one: a file that moved away would count zero and fail, not pass.
+    @Test func eachCatalogKeyIsSpelledOnceInTheType() throws {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("MacSCPAppKit")
+            .appendingPathComponent("PlaintextConfirmationBody.swift")
+        let source = try SourceCorpus.commentFree(of: url)
+        func occurrences(_ literal: String) -> Int {
+            source.components(separatedBy: literal).count - 1
+        }
+        #expect(occurrences("\"transport.plaintext.body\"") == 1)
+        #expect(occurrences("\"transport.plaintext.body.ftp\"") == 1)
     }
 
     /// The tab carries the kind next to the pending flag, and clears it with

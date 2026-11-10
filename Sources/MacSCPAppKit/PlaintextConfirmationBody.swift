@@ -4,7 +4,8 @@ import macSCPCore
 /// comes from `PlaintextTransportGate.kind(for:)`, which is where the choice
 /// is made; this type only turns it into a catalog key and its text, so a
 /// plain FTP session is pointed at FTPS and a web endpoint at the encrypted
-/// scheme.
+/// scheme. Each catalog key is spelled once, in `key(for:)`; the text is
+/// looked up under that key.
 enum PlaintextConfirmationBody {
     /// The catalog key of the sentence for this kind.
     static func key(for kind: PlaintextTransportGate.Kind) -> String {
@@ -14,19 +15,20 @@ enum PlaintextConfirmationBody {
         }
     }
 
-    /// The localized sentence for this kind.
+    /// The localized sentence for this kind, looked up under `key(for:)`.
     static func text(for kind: PlaintextTransportGate.Kind) -> String {
+        L10n.string(key(for: kind), fallback(for: kind))
+    }
+
+    /// The English text shown when the catalog has no entry for the key.
+    private static func fallback(for kind: PlaintextTransportGate.Kind) -> String {
         switch kind {
         case .http:
-            L10n.string(
-                "transport.plaintext.body",
-                "This connection uses http://, so the password travels in the clear. "
-                    + "Use https:// where the server offers it.")
+            "This connection uses http://, so the password travels in the clear. "
+                + "Use https:// where the server offers it."
         case .plainFTP:
-            L10n.string(
-                "transport.plaintext.body.ftp",
-                "This connection uses plain FTP, so the password travels in the clear. "
-                    + "Use FTPS where the server offers it.")
+            "This connection uses plain FTP, so the password travels in the clear. "
+                + "Use FTPS where the server offers it."
         }
     }
 }
