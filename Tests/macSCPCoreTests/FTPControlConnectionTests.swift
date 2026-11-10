@@ -551,6 +551,123 @@ struct FTPControlConnectionTests {
         #expect(refused == .failed(.loginRefused))
     }
 
+    // MARK: - The anonymous login
+
+    /// The public placeholder an anonymous login sends for `PASS` when the
+    /// person stored none. It is a convention and not a secret, so a case may
+    /// spell it; the password a person stores is always a generated value.
+    private static let anonymousPlaceholder = "anonymous@"
+
+    /// A server that accepts exactly the login named, with a generated
+    /// password unless one is given.
+    private static func server(
+        accepting username: String, password: String = LoopbackFTPCredentials().password
+    ) -> LoopbackFTPServer {
+        LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            credentials: LoopbackFTPCredentials(username: username, password: password))
+    }
+
+    /// A session with no user name logs in as `anonymous`, with the
+    /// conventional placeholder for a password.
+    ///
+    /// Measured against the rig on 2026-11-09 (docs/BACKLOG.md, the row about
+    /// anonymous FTP): `USER` with nothing after it is answered `500`, which
+    /// the dial reads as a refused login. The server here accepts ONLY the
+    /// anonymous name with the placeholder password, so a dial that composed
+    /// either half differently is a refused login and not a quiet pass; the
+    /// recorded `USER` argument is asserted beside it because the server
+    /// stores no `PASS` argument.
+    @Test func anEmptyUserNameLogsInAsAnonymousWithTheConventionalPassword() async throws {
+        let server = Self.server(accepting: "anonymous", password: Self.anonymousPlaceholder)
+        let outcome = try await Self.running(server) { host, port in
+            await Self.dial(
+                server, host: host, port: port, security: .plain, password: "", username: "")
+        }
+        #expect(outcome == .connected)
+        let commands = await server.receivedCommands
+        #expect(commands.map(\.verb).prefix(2) == ["USER", "PASS"])
+        #expect(commands.first { $0.verb == "USER" }?.argument == "anonymous")
+    }
+
+    /// An empty name with a stored password sends THAT password: the
+    /// placeholder is for a login that has none, not a replacement for one.
+    @Test func anEmptyUserNameWithAStoredPasswordSendsThatPassword() async throws {
+        let stored = LoopbackFTPCredentials().password
+        let server = Self.server(accepting: "anonymous", password: stored)
+        let outcomes = try await Self.running(server) { host, port in
+            let withStored = await Self.dial(
+                server, host: host, port: port, security: .plain, password: stored, username: "")
+            // The negative beside it, same server: the same name with nothing
+            // stored sends the placeholder, which this server refuses.
+            let withNone = await Self.dial(
+                server, host: host, port: port, security: .plain, password: "", username: "")
+            return (withStored: withStored, withNone: withNone)
+        }
+        #expect(outcomes.withStored == .connected)
+        #expect(outcomes.withNone == .failed(.loginRefused))
+        let users = await server.receivedCommands.filter { $0.verb == "USER" }.map(\.argument)
+        #expect(users == ["anonymous", "anonymous"])
+    }
+
+    /// A name that is typed is sent exactly as typed, and an empty password
+    /// stays empty for it: the placeholder belongs to the anonymous login
+    /// only.
+    @Test func aNonEmptyUserNameIsSentAsItIsWithItsOwnPassword() async throws {
+        // A name that is not `anonymous`, and a server that expects an EMPTY
+        // password for it.
+        let named = Self.server(accepting: "someone", password: "")
+        let namedOutcome = try await Self.running(named) { host, port in
+            await Self.dial(
+                named, host: host, port: port, security: .plain, password: "",
+                username: "someone")
+        }
+        #expect(namedOutcome == .connected)
+        #expect(await named.receivedCommands.first { $0.verb == "USER" }?.argument == "someone")
+
+        // The generated login of the existing cases is unchanged too.
+        let generated = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let generatedOutcome = try await Self.running(generated) { host, port in
+            await Self.dial(generated, host: host, port: port, security: .plain)
+        }
+        #expect(generatedOutcome == .connected)
+        let sentTheGeneratedName = await generated.receivedCommands
+            .first { $0.verb == "USER" }?.argument == generated.credentials.username
+        #expect(sentTheGeneratedName)
+    }
+
+    /// A name typed as `anonymous` with no password gets the placeholder too:
+    /// the login is anonymous either way, and the two spellings of it should
+    /// not differ by whether the person left the field blank.
+    @Test func aUserNameOfAnonymousWithNoPasswordSendsThePlaceholder() async throws {
+        let server = Self.server(accepting: "anonymous", password: Self.anonymousPlaceholder)
+        let outcome = try await Self.running(server) { host, port in
+            await Self.dial(
+                server, host: host, port: port, security: .plain, password: "",
+                username: "anonymous")
+        }
+        #expect(outcome == .connected)
+        #expect(await server.receivedCommands.first { $0.verb == "USER" }?.argument == "anonymous")
+    }
+
+    /// Only the empty string is the anonymous login. A name of nothing but
+    /// whitespace is sent as typed: the dial does not rewrite what the
+    /// person entered except in the one case, and a server that wants
+    /// that name gets it.
+    @Test func aUserNameOfOnlyWhitespaceIsNotTreatedAsEmpty() async throws {
+        let stored = LoopbackFTPCredentials().password
+        let server = Self.server(accepting: " ", password: stored)
+        let outcome = try await Self.running(server) { host, port in
+            await Self.dial(
+                server, host: host, port: port, security: .plain, password: stored,
+                username: " ")
+        }
+        #expect(outcome == .connected)
+        let users = await server.receivedCommands.filter { $0.verb == "USER" }.map(\.argument)
+        #expect(users == [" "])
+    }
+
     // MARK: - The turn
 
     /// Two commands issued at once each get the reply to ITS OWN command.

@@ -760,7 +760,8 @@ actor FTPControlConnection {
         // F3). All of them are "this is not a login": the dial stops here and
         // `connect` closes the connection, so nothing reads the promised
         // follow-up against a later command.
-        let user = try await sendCredential("USER", username)
+        let login = Self.login(username: username, password: password)
+        let user = try await sendCredential("USER", login.username)
         guard user.isPositiveCompletion || user.isIntermediate else {
             throw FTPConnectionFailure.loginRefused
         }
@@ -769,7 +770,7 @@ actor FTPControlConnection {
             // asking for an `ACCT` this backend does not send, and reading it
             // as a successful login would carry on against a session that is
             // not logged in.
-            let accepted = try await sendCredential("PASS", password)
+            let accepted = try await sendCredential("PASS", login.password)
             guard accepted.isPositiveCompletion else { throw FTPConnectionFailure.loginRefused }
         }
 
@@ -802,6 +803,53 @@ actor FTPControlConnection {
         // read under the per-reply idle bound (R2).
         replyBound = Self.timeAmount(tuning.replyIdleTimeout)
     }
+
+    /// The name and the password the `USER` and `PASS` steps send: the ONE
+    /// place a stored login is turned into a wire login.
+    ///
+    /// A stored user name that is the empty string is an anonymous login, and
+    /// goes out as `anonymous` (maintainer decision, 2026-11-10). It cannot go
+    /// out as itself: measured on 2026-11-09 against the rig's ProFTPD
+    /// 1.3.9b, a `USER` with nothing after it is answered `500`, which the
+    /// dial reads as a refused login, so a session saved with no name — what
+    /// the form allows and what the CLI writes when `--user` is left out —
+    /// could never log in. Only the empty string counts. A name of nothing
+    /// but whitespace is sent as it arrives here: the dial does not rewrite
+    /// what it is given, with the single exception of nothing at all. (The
+    /// form's own conversion trims the name before the dial ever sees it, so
+    /// a name typed as spaces reaches the dial empty and is anonymous; this
+    /// function only sees a blank name that came from somewhere that does
+    /// not trim, an import or a hand-edited sessions file, and it leaves that
+    /// one alone.)
+    ///
+    /// The password placeholder is sent when the login that results is
+    /// anonymous AND the stored password is empty. Both ways of reaching an
+    /// anonymous login count — the empty name above, and a name that is
+    /// exactly the lowercase word `anonymous` — so the two spellings of one
+    /// login do not differ by which field the person left blank. The
+    /// placeholder is the e-mail-address-shaped string that anonymous servers
+    /// conventionally accept (RFC 1635 describes the practice); it is a
+    /// convention and NOT a secret, and it names no real address. A stored
+    /// password is always sent as stored, anonymous or not: the placeholder
+    /// replaces nothing a person provided. Any other name keeps an empty
+    /// password empty, exactly as before.
+    ///
+    /// Nothing that DISPLAYS the name is touched: the sidebar and audit
+    /// summaries are built by the field schema's summary function from the
+    /// stored name, which stays empty, and an empty name shows the host alone.
+    /// The mapping exists on the wire and nowhere else.
+    private static func login(username: String, password: String) -> (username: String, password: String) {
+        let name = username.isEmpty ? anonymousUsername : username
+        guard name == anonymousUsername, password.isEmpty else { return (name, password) }
+        return (name, anonymousPassword)
+    }
+
+    /// The user name an anonymous login is made with.
+    private static let anonymousUsername = "anonymous"
+
+    /// The password an anonymous login is made with when none is stored. A
+    /// convention, not a secret; see `login(username:password:)`.
+    private static let anonymousPassword = "anonymous@"
 
     /// Sends a command whose argument is a CREDENTIAL, reporting a refused
     /// one as a credential rather than as a path.

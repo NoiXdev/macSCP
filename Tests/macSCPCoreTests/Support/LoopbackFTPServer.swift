@@ -9,10 +9,18 @@ import macSCPCore
 
 // MARK: - Credentials
 
-/// The login a `LoopbackFTPServer` accepts. Generated per server instance, so
-/// there is no literal in the tree that could be mistaken for a real secret,
-/// and printing one shows nothing: a failed `#expect` prints the value of
-/// every operand it touched, and this is a value that must not reach a log.
+/// The login a `LoopbackFTPServer` accepts. Generated per server instance by
+/// default, so there is no literal in the tree that could be mistaken for a
+/// real secret, and printing one shows nothing: a failed `#expect` prints the
+/// value of every operand it touched, and this is a value that must not reach
+/// a log.
+///
+/// A case whose subject is the user name or the password the dial CHOOSES
+/// (the empty-name mapping to the anonymous login) fixes the half it is about
+/// with `init(username:password:)`, so that the server accepts exactly the
+/// login the dial should have composed and a wrong composition is a refused
+/// login. The password a person stores stays a generated value in those
+/// cases; only the public placeholder is spelled out.
 struct LoopbackFTPCredentials: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     let username: String
     let password: String
@@ -20,6 +28,11 @@ struct LoopbackFTPCredentials: Sendable, CustomStringConvertible, CustomDebugStr
     init() {
         username = "user-\(UUID().uuidString.prefix(8))"
         password = UUID().uuidString
+    }
+
+    init(username: String, password: String) {
+        self.username = username
+        self.password = password
     }
 
     var description: String { "LoopbackFTPCredentials(<redacted>)" }
@@ -217,7 +230,7 @@ final class LoopbackFTPState: Sendable {
 ///
 /// Credentials are generated per instance (`credentials`).
 actor LoopbackFTPServer {
-    let credentials = LoopbackFTPCredentials()
+    let credentials: LoopbackFTPCredentials
 
     private let security: FTPSecurityMode
     private let advertisesMLSD: Bool
@@ -370,6 +383,10 @@ actor LoopbackFTPServer {
     ///   so the number of CONSTRUCTIONS was 96 when 97 was written. That is
     ///   the third instance of a pattern counting its own prose on this
     ///   plan.)
+    /// - Parameter credentials: the one login this server accepts. Left out,
+    ///   a fresh generated pair, as before the parameter existed; a case
+    ///   about WHICH login the dial composes passes a pair with the half it
+    ///   is about fixed.
     init(
         security: FTPSecurityMode,
         advertisesMLSD: Bool,
@@ -381,8 +398,10 @@ actor LoopbackFTPServer {
         dataTLSStartsAfterCommand: Bool = false,
         dataConnectionsPresentAnotherCertificate: Bool = false,
         refusesProtectedTransfersWith425: LoopbackDataRefusal? = nil,
-        announcesTransferBeforeItsDataHandshake: Bool = false
+        announcesTransferBeforeItsDataHandshake: Bool = false,
+        credentials: LoopbackFTPCredentials = LoopbackFTPCredentials()
     ) {
+        self.credentials = credentials
         precondition(
             !announcesTransferBeforeItsDataHandshake || dataTLSStartsAfterCommand,
             "announcesTransferBeforeItsDataHandshake needs dataTLSStartsAfterCommand")
